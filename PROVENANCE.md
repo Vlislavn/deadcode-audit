@@ -9,8 +9,7 @@ No license for original the source monorepo contributions is invented by this ex
 Some detectors/scoring explicitly identify ports from scanaislop/aislop;
 the upstream MIT notice is retained in THIRD_PARTY_NOTICES.md.
 
-The project is licensed under CC BY-NC 4.0 (non-commercial use with attribution required);
-see LICENSE. MIT-licensed upstream portions retain commercial use under their own terms.
+The project is licensed under the MIT License; see LICENSE.
 
 ## Migration and validation — 2026-09-15
 
