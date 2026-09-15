@@ -225,12 +225,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _with_compare(
         "vulture-changed",
-        "Block on high-confidence Vulture dead code on changed lines; advise on lower-confidence candidates",
+        "Vulture gate on changed lines (blocks; advises candidates)",
     )
 
     redundancy_parser = _with_compare(
         "redundancy",
-        "Redundant transforms (block) + near-duplicate functions (advise) on changed lines",
+        "Block redundant transforms; advise near-duplicate functions",
     )
     redundancy_parser.add_argument("--clone-threshold", type=float, default=0.95)
     redundancy_parser.add_argument("--min-tokens", type=int, default=40)
@@ -242,7 +242,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     def _add_scan_args(parser_obj: argparse.ArgumentParser) -> None:
-        parser_obj.add_argument("paths", nargs="*", help="Files/dirs to scan (default: src)")
+        parser_obj.add_argument("paths", nargs="*", help="Files/dirs to scan (default: configured roots)")
         parser_obj.add_argument("--compare-branch", default="main")
         parser_obj.add_argument(
             "--changed",
@@ -250,7 +250,7 @@ def _build_parser() -> argparse.ArgumentParser:
             help="Scan only changed src files vs --compare-branch",
         )
 
-    scan_parser = subparsers.add_parser("scan", help="Run AI-slop / quality / security detectors and score 0–100")
+    scan_parser = subparsers.add_parser("scan", help="Scan Python files and score 0–100")
     _add_scan_args(scan_parser)
     scan_parser.add_argument("--json", action="store_true", help="JSON output")
     scan_parser.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 output")
@@ -261,7 +261,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Do not append to the score-history trend file",
     )
 
-    ci_parser = subparsers.add_parser("ci", help="Scan and gate: exit 1 if any error or score < failBelow")
+    ci_parser = subparsers.add_parser("ci", help="Scan and gate (exit 1 on errors or low score)")
     _add_scan_args(ci_parser)
     ci_parser.add_argument("--json", action="store_true", help="JSON output")
     ci_parser.add_argument(
@@ -271,15 +271,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Override the failBelow score threshold",
     )
 
-    subparsers.add_parser("rules", help="List every detector rule (id, engine, severity, category)")
+    subparsers.add_parser("rules", help="List detector rules")
 
-    trend_parser = subparsers.add_parser("trend", help="Show the recorded score history + sparkline")
+    trend_parser = subparsers.add_parser("trend", help="Show score history")
     trend_parser.add_argument("--limit", type=int, default=20)
 
     # On-demand, advisory: full all-pairs semantic overlap audit (whole tree, NOT diff-scoped).
     overlaps_parser = subparsers.add_parser(
         "overlaps",
-        help="On-demand all-pairs function-overlap audit (semantic, advisory — never blocks)",
+        help="All-pairs function-overlap audit (advisory)",
     )
     overlaps_parser.add_argument("--threshold", type=float, default=0.55)
     overlaps_parser.add_argument("--top", type=int, default=50, help="Keep the top N pairs (0 = all)")
@@ -299,7 +299,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # On-demand, advisory: whole-tree dead-symbol reachability scan (every runtime public symbol, NOT diff-scoped).
     reachability_scan_parser = subparsers.add_parser(
         "reachability-scan",
-        help="On-demand whole-tree dead-symbol scan (every runtime public symbol, advisory — never blocks)",
+        help="Whole-tree dead-symbol scan (advisory)",
     )
     reachability_scan_parser.add_argument(
         "--top",
@@ -312,12 +312,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # Import-cycle guard (Tarjan SCC over src/ modules). Blocks by default; --advisory for the whole-tree audit.
     cycles_parser = subparsers.add_parser(
         "cycles",
-        help="Detect circular imports among configured runtime modules (blocks unless --advisory)",
+        help="Detect circular imports (blocks unless --advisory)",
     )
     cycles_parser.add_argument(
         "--advisory",
         action="store_true",
-        help="Report only, always exit 0 (used by make deadcode-full)",
+        help="Report only, always exit 0",
     )
     cycles_parser.add_argument("--json", action="store_true", help="JSON output")
 
