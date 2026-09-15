@@ -65,3 +65,4 @@ uv build
 - Install extras together: a subsequent exact sync with fewer extras removes previously installed ones. The Vulture integration test requires its extra.
 
 Provenance, validation history and CI status: [PROVENANCE.md](PROVENANCE.md). Upstream notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+License: [CC BY-NC 4.0](LICENSE) — non-commercial use with attribution; MIT-ported portions are governed by their upstream terms.
