@@ -1,0 +1,26 @@
+# the source monorepo owns its repository policy. The implementation lives in deadcode-audit.
+project:
+  source_roots: [src, scripts]
+  import_roots: [src, '.']
+  test_roots: [tests/unit, tests/scripts]
+  mutation_roots: [src/modules, scripts/evals/monorepo_eval.py]
+  vulture_whitelist: [scripts/vulture_whitelist.py]
+  mutation_test_map:
+    src/modules/evals: [tests/unit/evals]
+    scripts/evals/monorepo_eval.py: [tests/unit/evals]
+  mutation_also_copy:
+    - scripts
+    - support
+    - experiments
+    - telegram_allowlist.txt
+    - evals/scenarios
+    - evals/rubrics
+    - evals/feedback
+    - evals/deadcode
+    - docs/progress_logs/_evidence/scripts
+    - docs/manual
+    - docs/diagram_targets.yml
+    - .env.example
+    - .pre-commit-config.yaml
+    - .deadcode.yml
+    - main.py

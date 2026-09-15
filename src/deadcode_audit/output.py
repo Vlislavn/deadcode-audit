@@ -28,13 +28,14 @@ def _summary(diagnostics: list[Diagnostic]) -> dict[str, int]:
     }
 
 
-def render_json(diagnostics: list[Diagnostic], score: ScoreResult) -> str:
+def render_json(diagnostics: list[Diagnostic], score: ScoreResult, *, files_scanned: int | None = None) -> str:
     """Machine envelope: score, label, per-engine counts, summary, and every diagnostic."""
     engines: dict[str, int] = {}
     for diag in diagnostics:
         engines[diag.engine] = engines.get(diag.engine, 0) + 1
     payload = {
         "schemaVersion": "1",
+        "files_scanned": files_scanned,
         "score": score.score,
         "label": score.label,
         "engines": engines,

@@ -73,7 +73,7 @@ uv sync --extra embeddings --extra vulture
 The first run downloads CodeBERT from Hugging Face. Computation is local CPU inference,
 with two CPU threads, batches of four, and at most 512 tokens per function.
 There are no paid LLM API calls. Model/dependency failures stop the command; no silent deterministic fallback.
-The JSON records model revision, functions scanned/embedded, pooling, truncation limit and cosine scores.
+The JSON records model revision, functions scanned/embedded, pooling, truncation limit and cosine scores. Scan JSON separately records `files_scanned`; `summary.files` counts files with findings.
 `--min-tokens` filters small functions; `--top 0` prints all matching pairs.
 Cosine similarity is a heuristic for inspection, not proof of semantic equivalence or permission to delete code.
 The comparison combines cosine, normalized syntax and API-name overlap; the API filter can miss semantic matches.
