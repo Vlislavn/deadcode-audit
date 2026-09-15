@@ -28,7 +28,7 @@ functions, 1940 embedded; 142 seconds and approximately 1.1 GiB sampled peak RSS
 measurements describe that input snapshot, not arbitrary repositories or a full scan of every
 target file. Model revision: `3b0952feddeffad0063f274080e3c23d75e7eb39`.
 
-The repository is private. The recorded [GitHub run](https://github.com/Vlislavn/deadcode-audit/actions/runs/34940212252)
+The recorded [GitHub run](https://github.com/Vlislavn/deadcode-audit/actions/runs/34940212252)
 ended with `startup_failure` before jobs; no CI pass is claimed and the API did not expose the
 cause. No billing/quota settings were changed. Native Windows mutation is unsupported; no Windows
 mutation support is claimed.
