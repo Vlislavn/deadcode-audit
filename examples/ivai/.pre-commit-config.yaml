@@ -1,0 +1,7 @@
+repos:
+  - repo: local
+    hooks:
+      - id: vulture
+        name: Vulture
+        entry: python -m vulture --ignore-names exc_type,tb,DataclassInstance
+        language: system
