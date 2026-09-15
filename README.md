@@ -37,7 +37,7 @@ project:
 
 Paths are relative to the target repository. Missing roots and malformed configuration fail visibly.
 `import_roots` identifies Python import bases; configure each separate application if necessary.
-Optional `vulture_whitelist` points to a target-owned whitelist file.
+Optional `vulture_whitelist` is a list of target-owned files, e.g. `[scripts/vulture_whitelist.py]`.
 Rules, scoring, exclusions, accepted cycles and CI thresholds are configured in the same file;
 `deadcode rules` lists available rule IDs. See `examples/monorepo/` for the migration policy.
 
@@ -92,6 +92,18 @@ uv run --no-sync pytest -q
 uv build
 ```
 
-CI runs core/CLI tests independently of the source monorepo. The Vulture integration test requires its extra.
+The CI workflow declares core/CLI checks independently of the source monorepo; its recorded startup status is below. The Vulture integration test requires its extra.
 Model inference is an explicit optional integration run, not a network dependency in every test.
 See [PROVENANCE.md](PROVENANCE.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source attribution.
+
+## Migration and verification — 2026-09-15
+
+the source monorepo's `scripts/deadcode/` and 17 dedicated test files were removed from the migration branch. Implementation and those tests now live here; clients import `deadcode_audit` and pin its Git revision. There is no compatibility shim at the old module path. the source monorepo retains `.deadcode.yml` policy and consumer tests; the dispatcher consumer uses its installed package, with `DEADCODE_PYTHON` as the interpreter override instead of `SOURCE_REPO`.
+
+Validation at the tests-only commit: **450 local tests passed**, including real CLI mutation checks (a killed mutant passes; a failing clean baseline is rejected). the source monorepo: five consumer tests passed, including invocation from another working directory. A built wheel was installed outside the source monorepo and its CLI executed. Consumers currently pin the initial implementation commit; later commit adds tests only.
+
+Real CodeBERT inference was exercised on a target repository's configured runtime corpus: 275 files, 2496 functions, 1940 embedded; 142 seconds and approximately 1.1 GiB sampled peak RSS. These measurements describe that input snapshot, not arbitrary repositories or a full scan of every target file. Model revision: `3b0952feddeffad0063f274080e3c23d75e7eb39`.
+
+The repository is private. The recorded [GitHub run](https://github.com/Vlislavn/deadcode-audit/actions/runs/34940212252) ended with `startup_failure` before jobs; no CI pass is claimed and the API did not expose the cause. No billing/quota settings were changed. Mutation tests require POSIX; no Windows mutation support is claimed.
+
+When combining features, install the extras together (`uv sync --extra vulture --extra mutation --extra embeddings`); a subsequent exact sync with fewer extras can remove optional dependencies. CodeBERT works with `trust_remote_code=False`; arbitrary Hugging Face models are not guaranteed compatible with this tokenizer/AutoModel adapter.
