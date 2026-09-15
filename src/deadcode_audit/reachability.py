@@ -92,7 +92,8 @@ def _public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
     decorated-but-dead symbols can still be surfaced. The decorator flag only downgrades them
     from blocking to advisory later; it never grants a silent pass.
     """
-    source = (diffscope.REPO_ROOT / path).read_text(encoding="utf-8")
+    # utf-8-sig: tolerate UTF-8-BOM files (U+FEFF) in target corpora, which crash ast.parse.
+    source = (diffscope.REPO_ROOT / path).read_text(encoding="utf-8-sig")
     tree = ast.parse(source)
     definitions: list[PublicSymbolDefinition] = []
     for node in tree.body:
