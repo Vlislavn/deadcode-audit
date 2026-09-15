@@ -68,3 +68,13 @@ def test_bom_source_is_not_a_parse_failure(tmp_path):
     result = run(tmp_path, "overlaps", "--no-embed", "--min-tokens", "1", "--json")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["functions_scanned"] == 1
+
+
+def test_clean_file_reports_actual_coverage(tmp_path):
+    source = project(tmp_path)
+    (source / "clean.py").write_text("answer = 42\n")
+    result = run(tmp_path, "scan", "--json")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["files_scanned"] == 1
+    assert payload["summary"]["files"] == 0  # files with findings, retained for compatibility

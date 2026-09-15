@@ -97,7 +97,7 @@ def _run_scan(args: argparse.Namespace) -> scan_mod.ScanResult:
 def _cmd_scan(args: argparse.Namespace) -> int:
     result = _run_scan(args)
     if args.json:
-        print(output.render_json(result.diagnostics, result.score))
+        print(output.render_json(result.diagnostics, result.score, files_scanned=result.file_count))
         return 0
     if args.sarif:
         print(output.render_sarif(result.diagnostics))
@@ -130,7 +130,7 @@ def _cmd_ci(args: argparse.Namespace) -> int:
     fail_below = args.fail_below if args.fail_below is not None else (cfg.fail_below or 0)
     has_error = any(d.severity is Severity.ERROR for d in result.diagnostics)
     print(
-        output.render_json(result.diagnostics, result.score)
+        output.render_json(result.diagnostics, result.score, files_scanned=result.file_count)
         if args.json
         else output.render_terminal(result.diagnostics, result.score)
     )
