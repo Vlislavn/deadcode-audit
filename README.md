@@ -64,5 +64,5 @@ uv build
 - **Mutation** (`mutmut`): POSIX only — use Linux/WSL. Runs execute repository tests in a disposable `mutants/` directory.
 - Install extras together: a subsequent exact sync with fewer extras removes previously installed ones. The Vulture integration test requires its extra.
 
-Provenance, validation history and CI status: [PROVENANCE.md](PROVENANCE.md). Upstream notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Upstream notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 License: [MIT](LICENSE).
