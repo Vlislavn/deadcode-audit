@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING
 
 from deadcode_audit import config, diffscope
 from deadcode_audit.framework import Detector, run_detectors
-from deadcode_audit.scoring import calculate_score
+from deadcode_audit.scoring import (
+    DEFAULT_SMOOTHING,
+    GOOD_THRESHOLD,
+    OK_THRESHOLD,
+    calculate_score,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,16 +39,29 @@ class ScanResult:
 
 
 def _iter_python_files(targets: list[Path]) -> list[Path]:
-    """Expand target paths (files or directories) to repo-relative Python files."""
+    """Expand target paths (files or directories) to repo-relative Python files, deduplicated.
+
+    Every returned path is repo-relative POSIX — a target written as an absolute path or with a
+    ``./`` prefix is normalised the same way as a directory expansion, and a file reachable both
+    explicitly and through a directory target is yielded once (a duplicate would double-penalise
+    the score).
+    """
     files: list[Path] = []
+    seen: set[Path] = set()
     for target in targets:
         abs_target = (diffscope.REPO_ROOT / target).resolve()
         if not abs_target.is_relative_to(diffscope.REPO_ROOT) or not abs_target.exists():
             raise ValueError(f"Target missing or outside checkout: {target}")
         if abs_target.is_dir():
-            files.extend(p.relative_to(diffscope.REPO_ROOT) for p in sorted(abs_target.rglob("*.py")))
-        elif abs_target.suffix == ".py" and abs_target.exists():
-            files.append(target)
+            candidates = (p.relative_to(diffscope.REPO_ROOT) for p in sorted(abs_target.rglob("*.py")))
+        elif abs_target.suffix == ".py":
+            candidates = (abs_target.relative_to(diffscope.REPO_ROOT),)
+        else:
+            continue  # non-Python file target: nothing to scan (unchanged behaviour)
+        for rel in candidates:
+            if rel not in seen:
+                seen.add(rel)
+                files.append(rel)
     return files
 
 
@@ -69,16 +87,23 @@ def run_scan(
     detectors: Sequence[Detector],
     cfg: config.DeadcodeConfig,
 ) -> ScanResult:
-    """Run all detectors over ``files``, apply config severities, and compute the score."""
+    """Run all detectors over ``files``, apply config severities, and compute the score.
+
+    The half-weight style set is derived from the active detectors' ``RuleSpec.style`` flags —
+    the documented contract — so a rule declared ``style=True`` is always scored as style,
+    never via a stale hardcoded list.
+    """
     sources = [(path, diffscope.read_text(path)) for path in files]
     diagnostics = run_detectors(sources, detectors)
     diagnostics = config.apply_rule_severities(diagnostics, cfg.rule_severity)
+    style_rules = frozenset(spec.rule for detector in detectors for spec in detector.rules if spec.style)
     score = calculate_score(
         diagnostics,
         weights=cfg.weights or None,
-        smoothing=cfg.smoothing if cfg.smoothing is not None else 20,
+        smoothing=cfg.smoothing if cfg.smoothing is not None else DEFAULT_SMOOTHING,
         source_file_count=len(files),
-        good_threshold=cfg.good_threshold if cfg.good_threshold is not None else 75,
-        ok_threshold=cfg.ok_threshold if cfg.ok_threshold is not None else 50,
+        good_threshold=cfg.good_threshold if cfg.good_threshold is not None else GOOD_THRESHOLD,
+        ok_threshold=cfg.ok_threshold if cfg.ok_threshold is not None else OK_THRESHOLD,
+        style_rules=style_rules,
     )
     return ScanResult(diagnostics=diagnostics, score=score, file_count=len(files))

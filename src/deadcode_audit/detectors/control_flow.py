@@ -160,7 +160,11 @@ def _base_is_stub_context(base: ast.expr) -> bool:
     Any base whose final identifier is exactly ``ABC`` / ``ABCMeta``, or is exactly ``Protocol``
     or *ends with* ``Protocol`` (e.g. ``Renderer`` would NOT match, but ``RendererProtocol``
     would), declares a context where ``pass``/``...`` bodies are expected interface members.
+    Parameterised bases (``class Foo(Protocol[T]):``) arrive as ``ast.Subscript``; the subscripted
+    value is unwrapped first so a generic Protocol/ABC base is still recognised.
     """
+    if isinstance(base, ast.Subscript):
+        base = base.value  # ``Protocol[T]`` / ``ABC[T]``: judge the underlying base
     tail = _decorator_tail_name(base)  # same final-identifier extraction works for base exprs
     if tail is None:
         return False

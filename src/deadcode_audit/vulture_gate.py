@@ -71,14 +71,18 @@ def split_blocking_advisory(
 
 def _run_vulture(min_confidence: int) -> str:
     """Run Vulture across the source tree and return its stdout (raising on a tool error)."""
+    roots = diffscope.source_roots()
     whitelist = diffscope.project_paths("vulture_whitelist", [])
-    for path in [*diffscope.source_roots(), *whitelist]:
+    if not roots:
+        # Fail closed: with zero roots the gate would scan nothing and silently pass.
+        raise ValueError("No source roots configured for Vulture — refusing to run a no-op gate")
+    for path in [*roots, *whitelist]:
         if not (diffscope.REPO_ROOT / path).exists():
             raise ValueError(f"Configured Vulture path does not exist: {path}")
     completed = subprocess.run(
         [
             sys.executable, "-m", "vulture",
-            *(p.as_posix() for p in diffscope.source_roots()),
+            *(p.as_posix() for p in roots),
             *(p.as_posix() for p in whitelist),
             "--min-confidence",
             str(min_confidence),
@@ -93,6 +97,8 @@ def _run_vulture(min_confidence: int) -> str:
         cwd=diffscope.REPO_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",  # decode as UTF-8 regardless of locale, like every other git/tool call
+        errors="replace",
     )
     # Vulture exits 0 (no dead code) or 3 (dead code found); anything else is a tool error.
     if completed.returncode not in (0, 3):

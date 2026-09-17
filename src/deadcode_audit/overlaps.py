@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from deadcode_audit import clones, diffscope
+from deadcode_audit.framework import safe_parse
 
 if TYPE_CHECKING:
     import numpy as np
@@ -41,7 +43,7 @@ _SEMANTIC_THRESHOLD = 0.3
 class _SourcedFunc:
     """A clone fingerprint record plus the function's source text (for embedding)."""
 
-    record: clones._FuncRecord
+    record: clones.FuncRecord
     source: str
 
 
@@ -66,11 +68,15 @@ def build_corpus() -> list[_SourcedFunc]:
     funcs: list[_SourcedFunc] = []
     for path in diffscope.all_src_files():
         source = diffscope.read_text(path)
-        tree = ast.parse(source)
+        tree = safe_parse(source)
+        if tree is None:
+            # One malformed file must not crash the whole audit; warn and skip it.
+            print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
+            continue
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 tokens = tuple(clones.normalize_function(node))
-                record = clones._FuncRecord(path, node.lineno, node.name, tokens, clones._semantic_signature(tokens))
+                record = clones.FuncRecord(path, node.lineno, node.name, tokens, clones.semantic_signature(tokens))
                 # Fail-open: a None segment (rare, position-less node) -> "" -> deterministic-only for this fn.
                 funcs.append(_SourcedFunc(record=record, source=ast.get_source_segment(source, node) or ""))
     return funcs
@@ -127,7 +133,7 @@ def find_overlaps(
             elif _W_API_DET + _W_STRUCT_DET * struct_ceiling < threshold:
                 continue
 
-            api = clones._jaccard(sem_i, sem_j)
+            api = clones.jaccard(sem_i, sem_j)
             if api < semantic_threshold:
                 continue
             struct = clones.clone_similarity(list(tokens_i), list(tokens_j))
@@ -177,8 +183,9 @@ def _render_human(pairs: list[OverlapPair], *, embed_active: bool, threshold: fl
     return "\n".join(lines)
 
 
-def _render_json(pairs: list[OverlapPair], *, embed_active: bool, threshold: float, model: str) -> str:
-    payload = {
+def _json_payload(pairs: list[OverlapPair], *, embed_active: bool, threshold: float, model: str) -> dict[str, object]:
+    """JSON payload for the overlap report (``run`` adds run-level stats and dumps once)."""
+    return {
         "threshold": threshold,
         "model": model if embed_active else None,
         "embed_active": embed_active,
@@ -195,7 +202,6 @@ def _render_json(pairs: list[OverlapPair], *, embed_active: bool, threshold: flo
             for p in pairs
         ],
     }
-    return json.dumps(payload, indent=2)
 
 
 def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool) -> int:
@@ -213,16 +219,12 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
         raise ValueError("No functions meet min_tokens; no comparisons performed")
     pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens, embed_fn=embed_fn)
     total_pairs = len(pairs)
-    if top:
+    if top > 0:  # top <= 0 means "all" (as in reachability-scan); avoids a negative back-slice
         pairs = pairs[:top]
     embed_active = embed_fn is not None
-    rendered = (
-        _render_json(pairs, embed_active=embed_active, threshold=threshold, model=model)
-        if as_json
-        else _render_human(pairs, embed_active=embed_active, threshold=threshold, model=model)
-    )
     if as_json:
-        payload = json.loads(rendered)
+        # Build the payload dict once and dump once — no json.loads(json.dumps(...)) round-trip.
+        payload = _json_payload(pairs, embed_active=embed_active, threshold=threshold, model=model)
         payload["functions_scanned"] = len(corpus)
         payload["functions_embedded"] = eligible if embed_active else 0
         payload["functions_compared"] = eligible
@@ -231,5 +233,7 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
         if embed_active:
             payload["embedding"] = overlap_embed.model_metadata()
         rendered = json.dumps(payload, indent=2)
+    else:
+        rendered = _render_human(pairs, embed_active=embed_active, threshold=threshold, model=model)
     print(rendered)
     return 0

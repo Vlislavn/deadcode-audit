@@ -37,7 +37,8 @@ THIN_WRAPPER = RuleSpec(
     help=(
         "This function's whole body forwards its own parameters unchanged to another callable, "
         "adding a layer of indirection with no behaviour. Call the wrapped callable directly, or "
-        "give the wrapper a reason to exist (a default, a transform, validation)."
+        "give the wrapper a reason to exist: inject a default the callee lacks, transform an "
+        "argument, or validate input."
     ),
     style=True,
     fixable=False,
@@ -150,7 +151,10 @@ def _is_verbatim_passthrough(node: _FuncDef, call: ast.Call) -> bool:
     Conservative on every axis: positional params must be forwarded positionally in declaration
     order; ``*args`` forwarded as a single ``*args`` star-arg; ``**kwargs`` forwarded as a single
     ``**kwargs`` double-star; no keyword arguments, no literals, no transformations, no extra or
-    missing parameters, and the call must not be recursion into the wrapper itself.
+    missing parameters, and the call must not be recursion into the wrapper itself. Parameter
+    defaults neither spare nor flag by themselves: a defaulted parameter forwarded unchanged
+    injects nothing (still a verbatim pass-through), while a wrapper that *injects* its default
+    omits the parameter from the call and is already spared by the drop-a-parameter check.
     """
     if _is_recursive(node, call):
         return False
@@ -249,9 +253,19 @@ def _receiver_is_first_param(func: ast.expr, expected_positional: list[str]) -> 
 
 
 def _is_recursive(node: _FuncDef, call: ast.Call) -> bool:
-    """True if the call's callable is the wrapper itself (``def f(): return f(...)``)."""
+    """True when the call targets the wrapper itself — never a no-op forward.
+
+    Both self-call shapes count: a bare-name recursion (``def f(): return f(...)``) and method
+    self-recursion through the receiver (``def f(self, x): return self.f(x)``), where the receiver
+    is the wrapper's own first positional parameter.
+    """
     func = call.func
-    return isinstance(func, ast.Name) and func.id == node.name
+    if isinstance(func, ast.Name):
+        return func.id == node.name
+    if isinstance(func, ast.Attribute) and func.attr == node.name:
+        positional = node.args.posonlyargs + node.args.args
+        return bool(positional) and isinstance(func.value, ast.Name) and func.value.id == positional[0].arg
+    return False
 
 
 def _callable_repr(func: ast.expr) -> str:

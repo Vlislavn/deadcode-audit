@@ -67,15 +67,16 @@ def render_sarif(diagnostics: list[Diagnostic]) -> str:
     for diag in diagnostics:
         if diag.rule not in rule_index:
             rule_index[diag.rule] = len(rules)
-            rules.append(
-                {
-                    "id": diag.rule,
-                    "name": diag.rule,
-                    "shortDescription": {"text": diag.message},
-                    "helpUri": "",
-                    "help": {"text": diag.help or diag.message},
-                }
-            )
+            descriptor: dict[str, object] = {
+                "id": diag.rule,
+                "name": diag.rule,
+                # Rule-level description (identical for every instance of the rule), not the
+                # first diagnostic's instance message — SARIF viewers show this as the rule summary.
+                "shortDescription": {"text": diag.help or diag.message},
+            }
+            if diag.help:  # remediation guidance; helpUri is omitted (no stable docs URL exists)
+                descriptor["help"] = {"text": diag.help}
+            rules.append(descriptor)
     results = [
         {
             "ruleId": diag.rule,

@@ -21,7 +21,7 @@ from deadcode_audit.cli import main
 def _func(
     symbol: str, *, tokens: tuple[str, ...], semantic: frozenset[str], source: str = "", line: int = 1
 ) -> overlaps._SourcedFunc:
-    record = clones._FuncRecord(Path("src/x.py"), line, symbol, tokens, semantic)
+    record = clones.FuncRecord(Path("src/x.py"), line, symbol, tokens, semantic)
     return overlaps._SourcedFunc(record=record, source=source)
 
 

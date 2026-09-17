@@ -1,7 +1,11 @@
-"""Security detector: hardcoded credentials, dynamic ``eval``/``exec``, and shell injection.
+"""Security detector: hardcoded credentials, dynamic ``eval``/``exec``, shell injection, and
+assert-based runtime validation.
 
-Three AST-driven rules, all false-negative-biased (when in doubt, do NOT flag — a security
-detector that cries wolf is ignored, and an ignored detector catches nothing):
+Four AST-driven rules. Three are false-negative-biased (when in doubt, do NOT flag — a security
+detector that cries wolf is ignored, and an ignored detector catches nothing); the fourth
+(``security/assert-usage``) is deliberately recall-first, because its trigger is the statement
+type itself and its hazard — removal under ``python -O``/``-OO`` — is a property of the language,
+not of the surrounding code, so there is no per-condition doubt to resolve:
 
 * ``security/hardcoded-secret`` — a *literal* credential, recognised either by a
   credential-named assignment target (``password``/``token``/``api_key`` ...) carrying a
@@ -12,13 +16,23 @@ detector that cries wolf is ignored, and an ignored detector catches nothing):
   is a SAFE parser, never flagged.
 * ``security/shell-injection`` — ``subprocess.*(..., shell=True)`` (or ``os.system(...)``) whose
   command argument is *not* a pure string literal (a Name, concatenation, f-string, ``.format``
-  or ``%`` interpolation): the shape that lets attacker-controlled data reach a shell. A fully
-  literal constant command with ``shell=True`` is NOT flagged — it carries no injection surface.
+  or ``%`` interpolation): the shape that lets attacker-controlled data reach a shell. Three
+  no-injection-surface forms are NOT flagged: a fully literal constant command; a ``+``
+  concatenation whose every component is a literal string or a ``shlex.quote(...)`` call (the
+  pattern the rule's own help recommends); and a subprocess call on an unrelated object
+  (``obj.run(...)`` is not a shell-out — only a bare or subprocess-qualified call counts).
+* ``security/assert-usage`` — an ``assert`` statement in a non-test file. Asserts are compiled
+  out entirely under ``python -O``/``-OO`` (language reference), so a runtime check written as
+  an assert silently vanishes in optimized builds — the hazard Bandit tracks as B101. WARNING,
+  not ERROR: the idiom is common (including static type-narrowing asserts) and the inline
+  ignore directive with a reason is the escape hatch for authorized uses. Test files are exempt
+  (the one legitimate assert habitat).
 
 This module is itself the most likely false positive: every trigger token (the credential-name
 keywords, the ``AKIA``/``sk-``/``eyJ`` shape prefixes, ``eval``, ``shell``) is assembled at runtime
 via string concatenation so neither the masked-source scans nor a future text grep can self-match
-the literals in this file.
+the literals in this file. The assert rule has no literal trigger at all — its trigger is the
+``ast.Assert`` node type itself — so it cannot self-match any text.
 """
 
 from __future__ import annotations
@@ -73,7 +87,20 @@ SHELL_SPEC = RuleSpec(
     ),
 )
 
-rules: tuple[RuleSpec, ...] = (SECRET_SPEC, EVAL_SPEC, SHELL_SPEC)
+ASSERT_SPEC = RuleSpec(
+    rule="security/assert-usage",
+    engine=ENGINE_SECURITY,
+    default_severity=Severity.WARNING,
+    category="Runtime validation",
+    help=(
+        "Assert statements are removed entirely when Python runs with -O or -OO, so any runtime "
+        "check written as an assert silently disappears in optimized builds. Guard the condition "
+        "with an explicit if/raise instead (Bandit B101); for checker-only type narrowing prefer "
+        "typing.cast or assert_never. Test files are exempt."
+    ),
+)
+
+rules: tuple[RuleSpec, ...] = (SECRET_SPEC, EVAL_SPEC, SHELL_SPEC, ASSERT_SPEC)
 
 
 # --- Secret-name + shape recognisers (tokens built by concatenation to avoid self-match) ------
@@ -253,17 +280,46 @@ def _is_format_call(node: ast.expr) -> bool:
     )
 
 
+def _is_quoted_part(node: ast.expr) -> bool:
+    """True when one ``+``-chain component is a literal str or a ``shlex.quote(...)`` call.
+
+    A literal contributes nothing attacker-controlled and ``shlex.quote`` shell-escapes its
+    argument, so a concatenation built only from such parts is the documented mitigation, not an
+    injection surface.
+    """
+    if _string_constant(node) is not None:
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "quote"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "sh" + "lex"
+    )
+
+
+def _is_fully_quoted_concat(node: ast.expr) -> bool:
+    """True for a ``+`` chain whose every leaf is a literal str or a ``shlex.quote(...)`` call."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_fully_quoted_concat(node.left) and _is_fully_quoted_concat(node.right)
+    return _is_quoted_part(node)
+
+
 def _is_dynamic_command(node: ast.expr) -> bool:
     """True when the command expression interpolates/derives from non-literal data.
 
     Covers a bare Name (variable), string concatenation/``%`` BinOp, an f-string (JoinedStr),
-    and ``"...".format(...)``. A fully literal command is excluded by the caller.
+    and ``"...".format(...)``. A fully literal command is excluded by the caller, and so is a
+    ``+`` chain whose every component is a literal or a ``shlex.quote(...)`` call — the safe
+    pattern, not an injection surface.
     """
     if isinstance(node, ast.Name):
         return True
     if isinstance(node, ast.JoinedStr):  # f-string
         return True
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        if isinstance(node.op, ast.Add) and _is_fully_quoted_concat(node):
+            return False
         return True
     return _is_format_call(node)
 
@@ -334,8 +390,10 @@ def _detect_shell(node: ast.AST, path_posix: str) -> Diagnostic | None:
         if not _is_dynamic_command(command):
             return None
         target = "os.system"
-    # subprocess.<func>(..., shell=True) with a non-literal command.
-    elif attr in _SUBPROCESS_FUNCS and _has_shell_true(node):
+    # subprocess.<func>(..., shell=True) with a non-literal command. Only a bare or
+    # subprocess-qualified callable counts: ``obj.run(cmd, shell=True)`` is some unrelated
+    # runner object's method, not a shell-out (flagging it cried wolf).
+    elif (base is None or base == "sub" + "process") and attr in _SUBPROCESS_FUNCS and _has_shell_true(node):
         if _is_literal_command(command):  # fully literal command with shell=True -> not this rule
             return None
         if not _is_dynamic_command(command):
@@ -353,16 +411,43 @@ def _detect_shell(node: ast.AST, path_posix: str) -> Diagnostic | None:
     )
 
 
+def _detect_assert(node: ast.AST, path_posix: str) -> Diagnostic | None:
+    """Flag an ``assert`` statement: the runtime check it encodes is removed under ``-O``/``-OO``.
+
+    Deliberately recall-first, unlike the module's other rules: the trigger is the statement type
+    itself and the hazard is a language property, so there is no per-condition judgment to make
+    and no "when in doubt, do not flag" escape. Static type-narrowing asserts are stripped just
+    the same — the durable forms are an explicit ``if``/``raise`` (survives optimization) or
+    ``typing.cast``/``assert_never`` for checker-only intent.
+    """
+    if not isinstance(node, ast.Assert):
+        return None
+    return diagnostic_from_spec(
+        ASSERT_SPEC,
+        file_path=path_posix,
+        line=node.lineno,
+        message="Assert used as a runtime check: the statement is removed under python -O/-OO",
+        detail=(
+            "Write the check as an explicit if/raise (TypeError/ValueError/RuntimeError) so it "
+            "survives optimized builds (Bandit B101). For pure static type narrowing prefer "
+            "typing.cast or assert_never, or suppress with an inline ignore directive + reason."
+        ),
+    )
+
+
 def detect(ctx: FileContext) -> list[Diagnostic]:
-    """Run the three security rules over one parsed file context."""
+    """Run the four security rules over one parsed file context."""
     path_posix = ctx.path.as_posix()
-    is_test_file = path_posix.startswith("tests/") or "/tests/" in path_posix
+    is_test_file = ctx.is_test_file  # shared config-aware verdict (test_roots/test_ prefix/tests dir)
     findings: list[Diagnostic] = []
     for node in ast.walk(ctx.tree):
-        if not is_test_file:  # the hardcoded-secret rule is suppressed under tests/ (fixtures)
+        if not is_test_file:  # hardcoded-secret + assert-usage are suppressed under tests/ (fixtures)
             secret = _detect_secret(node, path_posix)
             if secret is not None:
                 findings.append(secret)
+            assert_finding = _detect_assert(node, path_posix)
+            if assert_finding is not None:
+                findings.append(assert_finding)
         eval_finding = _detect_eval(node, path_posix)
         if eval_finding is not None:
             findings.append(eval_finding)

@@ -3,7 +3,8 @@
 Two structural anti-patterns that weak coding agents leave behind around ``try/except``:
 
 * **swallowed-exception** (ERROR) — a handler that neither handles nor propagates the error:
-  either a sole ``pass`` or a sole *log-and-continue* (``logger.*`` / ``logging.*`` / ``log.*`` /
+  a sole ``pass``, a sole bare ``...``, a sole ``continue``/``break`` (error dropped, control
+  flow just moves on), or a sole *log-and-continue* (``logger.*`` / ``logging.*`` / ``log.*`` /
   ``print`` / ``warnings.warn``). This is exactly the failure mode the source monorepo's own fail-fast rule
   (SOURCE-D001) forbids: an error is silently dropped, so a later step runs on a broken state.
 
@@ -71,10 +72,14 @@ _LOG_DOTTED_CALLS = frozenset({("warnings", "warn")})
 
 
 def _attribute_root_name(node: ast.expr) -> str | None:
-    """Return the leftmost ``Name`` id of an attribute chain (``a.b.c`` -> ``a``), else None."""
+    """Return the leftmost ``Name`` id of an attribute/call chain (``a.b().c`` -> ``a``), else None.
+
+    Call boundaries are traversed so ``logging.getLogger(__name__).warning(...)`` — the standard
+    module-logger idiom — roots at ``logging`` and is still recognised as a pure log call.
+    """
     current = node
-    while isinstance(current, ast.Attribute):
-        current = current.value
+    while isinstance(current, (ast.Attribute, ast.Call)):
+        current = current.value if isinstance(current, ast.Attribute) else current.func
     if isinstance(current, ast.Name):
         return current.id
     return None
@@ -122,19 +127,38 @@ def _body_contains_raise(body: list[ast.stmt]) -> bool:
 
 
 def _is_swallow_body(body: list[ast.stmt]) -> bool:
-    """True iff the handler body is EXACTLY a swallow: a sole ``pass`` or a sole log/print call.
+    """True iff the handler body is EXACTLY a swallow — one statement that neither handles nor
+    propagates: ``pass``, a bare ``...``, a ``continue``/``break`` that just moves control flow
+    past the error, or a sole log/print call.
 
     Exactness is the guard: a body of length != 1, or a single statement that is anything other
-    than ``pass`` / a bare log-or-print ``Expr(Call)``, means real handling and is not flagged.
+    than those shapes, means real handling and is not flagged.
     """
     if len(body) != 1:
         return False
     statement = body[0]
-    if isinstance(statement, ast.Pass):
+    if isinstance(statement, (ast.Pass, ast.Continue, ast.Break)):
         return True
-    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
-        return _is_log_or_print_call(statement.value)
+    if isinstance(statement, ast.Expr):
+        value = statement.value
+        if isinstance(value, ast.Constant) and value.value is Ellipsis:
+            return True  # ``except E: ...`` — same placeholder as ``pass``
+        if isinstance(value, ast.Call):
+            return _is_log_or_print_call(value)
     return False
+
+
+def _swallow_shape(statement: ast.stmt) -> str:
+    """Human label for the sole swallow statement (for the finding message)."""
+    if isinstance(statement, ast.Pass):
+        return "pass"
+    if isinstance(statement, ast.Continue):
+        return "continue"
+    if isinstance(statement, ast.Break):
+        return "break"
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        return "log-and-continue"
+    return "..."
 
 
 def _is_bare_reraise_body(body: list[ast.stmt]) -> bool:
@@ -171,8 +195,7 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
                 )
             continue
         if _is_swallow_body(body):
-            statement = body[0]
-            shape = "pass" if isinstance(statement, ast.Pass) else "log-and-continue"
+            shape = _swallow_shape(body[0])
             diagnostics.append(
                 diagnostic_from_spec(
                     SWALLOWED,

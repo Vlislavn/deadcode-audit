@@ -11,8 +11,9 @@ same line is read structurally, not by string matching):
   above ``import os``; ``# return x`` on a ``return x`` line). Fires ONLY when the comment's
   content words are a subset of the identifiers/keywords on the adjacent code line AND the comment
   adds no "why" — so any comment carrying information not in the code is spared.
-* ``ai-slop/narrative-comment`` — decorative separators (``# =========``) and section/phase
-  headers (``# Step 1:`` / ``# Phase 2`` / ``# === Section ===``). Real prose is spared.
+* ``ai-slop/narrative-comment`` — a LONE decorative separator (``# =========`` with no adjacent
+  labeled comment). Separators framing a section label, and section/phase headers (``# Step 1:`` /
+  ``# === Section ===``), are navigation and spared; real prose is spared.
 
 Each rule encodes a *principle*, not a snippet, and is false-negative-biased: when a comment
 could plausibly carry information the code does not, we do not flag it.
@@ -65,8 +66,8 @@ NARRATIVE_COMMENT = RuleSpec(
     engine=ENGINE_AI_SLOP,
     default_severity=Severity.INFO,
     category="AI Slop",
-    help="Drop the decorative separator / section header; use blank lines and real declarations "
-    "to structure code instead of ASCII art or 'Step N' narration.",
+    help="Remove this lone decorative separator; use blank lines and real declarations to "
+    "structure code instead of comment art (labeled section dividers are legitimate and spared).",
     style=True,
 )
 
@@ -93,17 +94,8 @@ def _collect_comments(source: str) -> list[_Comment]:
     i.e. there is code to its left. A standalone comment has only whitespace before the ``#``.
     """
     comments: list[_Comment] = []
-    code_token_lines: set[int] = set()
     readline = io.StringIO(source).readline
     tokens = list(tokenize.generate_tokens(readline))
-    for tok in tokens:
-        # A "code" token on a line is anything that is not trivia (NL/NEWLINE/INDENT/DEDENT/
-        # COMMENT/ENCODING/ENDMARKER); used to decide inline-ness.
-        if tok.type not in _TRIVIA_TYPES and tok.start[0] == tok.end[0]:
-            code_token_lines.add(tok.start[0])
-        elif tok.type not in _TRIVIA_TYPES:
-            for ln in range(tok.start[0], tok.end[0] + 1):
-                code_token_lines.add(ln)
     for tok in tokens:
         if tok.type != token_mod.COMMENT:
             continue

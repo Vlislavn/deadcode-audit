@@ -150,6 +150,13 @@ def test_positive_param_with_default_still_forwarded_verbatim() -> None:
     assert _fires(src)
 
 
+def test_negative_default_injected_by_dropping_the_param() -> None:
+    # The wrapper's default is actually injected (the defaulted parameter is NOT forwarded), so
+    # the wrapper adapts the callee's signature and has a reason to exist.
+    src = "def w(x, timeout=30):\n    return f(x)\n"
+    assert not _fires(src)
+
+
 def test_negative_returns_non_call() -> None:
     src = "def w(x):\n    return x\n"
     assert not _fires(src)

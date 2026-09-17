@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from deadcode_audit.detectors import (
+from . import (
     comments,
     complexity,
     control_flow,

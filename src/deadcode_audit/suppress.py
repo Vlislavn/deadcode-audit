@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import re
+import sys
 import token as token_mod
 import tokenize
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from deadcode_audit.diagnostic import Diagnostic
 
-_DIRECTIVE = re.compile(r"#\s*ai-slop:\s*(ignore-file|ignore)\b(?:\s*\[([^\]]*)\])?", re.IGNORECASE)
+_DIRECTIVE = re.compile(r"#\s*ai-slop:\s*(ignore-file|ignore)(?![\w-])(?:\s*\[([^\]]*)\])?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,11 @@ class Suppressions:
 
 
 def _parse_codes(group: str | None) -> frozenset[str] | None:
-    """``None`` for a bare ``ignore`` (all rules); else the comma/space-separated code set."""
+    """``None`` for a bare ``ignore`` (all rules); else the comma/space-separated code set.
+
+    An explicitly empty bracket set (``ignore[]``) returns an empty frozenset, which matches no
+    rule; the caller rejects it loudly so a typo cannot act as a silent no-op directive.
+    """
     if group is None:
         return None
     return frozenset(code.strip() for code in re.split(r"[,\s]+", group) if code.strip())
@@ -61,6 +66,13 @@ def parse_suppressions(source: str) -> Suppressions:
         if match is None:
             continue
         codes = _parse_codes(match.group(2))
+        if codes is not None and not codes:
+            print(
+                f"warning: '{tok.string.strip()}' suppresses no rules (empty code set) — "
+                "list codes like ignore[rule-name] or drop the brackets to suppress all rules on the line",
+                file=sys.stderr,
+            )
+            continue
         if match.group(1).lower() == "ignore-file":
             suppressions.file_level.append(codes)
         else:

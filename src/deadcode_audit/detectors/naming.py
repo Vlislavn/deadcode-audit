@@ -131,7 +131,10 @@ def _binding_names(target: ast.expr) -> list[tuple[str, int]]:
         for element in target.elts:
             flattened.extend(_binding_names(element))
         return flattened
-    # Attribute (``self.x``), Subscript (``d[k]``), Starred, etc. bind no new simple name here.
+    if isinstance(target, ast.Starred):
+        # ``data1, *rest2 = f()``: the starred wrapper binds the name inside it.
+        return _binding_names(target.value)
+    # Attribute (``self.x``) and Subscript (``d[k]``) bind no new simple name here.
     return []
 
 
@@ -140,7 +143,11 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
 
     AST-driven (no text scan), so string/comment content can never self-match. Definitions (anywhere
     in the tree) accept both patterns; module-level assignments accept only the stem+counter pattern.
+    Test modules are skipped entirely: numbered test ids (``def test_1()``) and fixture helpers are
+    legitimate there, and the shared ``ctx.is_test_file`` verdict keeps the guard config-aware.
     """
+    if ctx.is_test_file:
+        return []
     findings: list[Diagnostic] = []
 
     for node in ast.walk(ctx.tree):

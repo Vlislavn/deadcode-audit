@@ -157,23 +157,44 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
 
     scoring = raw.get("scoring", {})
     _require(isinstance(scoring, dict), "scoring must be a mapping")
+    unknown_scoring = set(scoring) - {"weights", "smoothing", "thresholds"}
+    _require(not unknown_scoring, f"unknown scoring keys {sorted(unknown_scoring)}")
     weights = scoring.get("weights", {})
     _require(
-        isinstance(weights, dict) and all(isinstance(v, (int, float)) for v in weights.values()),
+        isinstance(weights, dict)
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in weights.values()),
         "scoring.weights must map engine -> number",
     )
     smoothing = scoring.get("smoothing")
     _require(
-        smoothing is None or isinstance(smoothing, int),
-        "scoring.smoothing must be an int",
+        smoothing is None or (isinstance(smoothing, int) and not isinstance(smoothing, bool)),
+        "scoring.smoothing must be an int (unquoted YAML booleans like ``on`` are rejected)",
     )
     thresholds = scoring.get("thresholds", {})
     _require(isinstance(thresholds, dict), "scoring.thresholds must be a mapping")
+    unknown_thresholds = set(thresholds) - {"good", "ok"}
+    _require(not unknown_thresholds, f"unknown scoring.thresholds keys {sorted(unknown_thresholds)}")
+    good = thresholds.get("good")
+    ok = thresholds.get("ok")
+    _require(
+        good is None or (isinstance(good, int) and not isinstance(good, bool)),
+        "scoring.thresholds.good must be an int",
+    )
+    _require(
+        ok is None or (isinstance(ok, int) and not isinstance(ok, bool)),
+        "scoring.thresholds.ok must be an int",
+    )
+    _require(good is None or ok is None or good >= ok, "scoring.thresholds.good must be >= scoring.thresholds.ok")
 
     ci = raw.get("ci", {})
     _require(isinstance(ci, dict), "ci must be a mapping")
+    unknown_ci = set(ci) - {"failBelow"}
+    _require(not unknown_ci, f"unknown ci keys {sorted(unknown_ci)}")
     fail_below = ci.get("failBelow")
-    _require(fail_below is None or isinstance(fail_below, int), "ci.failBelow must be an int")
+    _require(
+        fail_below is None or (isinstance(fail_below, int) and not isinstance(fail_below, bool)),
+        "ci.failBelow must be an int",
+    )
 
     exclude = raw.get("exclude", [])
     _require(
@@ -199,6 +220,8 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
         else:
             _require(isinstance(value, list) and all(isinstance(x, str) and x for x in value), f"project.{key} must be list[str]")
             _require(all(not Path(x).is_absolute() and ".." not in Path(x).parts for x in value), f"project.{key} must stay inside target checkout")
+            if key in {"source_roots", "import_roots", "test_roots", "mutation_roots"}:
+                _require(value, f"project.{key} must not be empty — omit the key to use the built-in defaults")
     own = DeadcodeConfig(
         project=project,
         rule_severity={str(k): v for k, v in rules.items()},
@@ -214,7 +237,9 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
 
 
 def _merge(parent: DeadcodeConfig, child: DeadcodeConfig) -> DeadcodeConfig:
-    """Child wins on scalars; dict fields deep-merge; exclude lists concatenate."""
+    """Child wins on scalars; ``rule_severity``/``weights`` merge per key; ``project`` sections are
+    replaced by the child's version (a shallow replace, not a recursive merge); ``exclude`` and
+    ``allowed_cycles`` lists concatenate."""
     return DeadcodeConfig(
         project={**parent.project, **child.project},
         rule_severity={**parent.rule_severity, **child.rule_severity},
@@ -228,12 +253,25 @@ def _merge(parent: DeadcodeConfig, child: DeadcodeConfig) -> DeadcodeConfig:
     )
 
 
+# Memoisation for :func:`load_deadcode_config`: per-file callers (``is_test_path`` runs once per
+# scanned file) would otherwise re-parse the YAML O(files) times. Keyed by resolved path, stamped
+# with ``st_mtime_ns`` + ``st_size`` so any rewrite of the file busts the cache.
+_config_cache: dict[Path, tuple[tuple[int, int], DeadcodeConfig]] = {}
+
+
 def load_deadcode_config(repo_root: Path, path: Path | None = None) -> DeadcodeConfig:
     """Load ``.deadcode.yml`` (absent file -> defaults; malformed file -> raise, never silent default)."""
-    cfg_path = path or (repo_root / DEADCODE_CONFIG_PATH)
+    cfg_path = (path or (repo_root / DEADCODE_CONFIG_PATH)).resolve()
     if not cfg_path.exists():
         return DeadcodeConfig()
-    return _parse_config(yaml.safe_load(cfg_path.read_text(encoding="utf-8")), cfg_path.parent, depth=0)
+    stat = cfg_path.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _config_cache.get(cfg_path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    parsed = _parse_config(yaml.safe_load(cfg_path.read_text(encoding="utf-8")), cfg_path.parent, depth=0)
+    _config_cache[cfg_path] = (stamp, parsed)
+    return parsed
 
 
 def apply_rule_severities(diagnostics: list[Diagnostic], rule_severity: dict[str, str]) -> list[Diagnostic]:

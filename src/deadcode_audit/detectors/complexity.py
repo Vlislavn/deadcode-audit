@@ -47,6 +47,8 @@ _NESTING_STMTS: tuple[type[ast.stmt], ...] = (
     ast.With,
     ast.AsyncWith,
     ast.Try,
+    ast.TryStar,  # ``except*`` groups (3.11+): the same nesting shape as a plain ``try``
+    ast.Match,  # each ``match`` arm body introduces a level, like an ``if`` branch
 )
 
 _FUNC_TYPES: tuple[type[ast.stmt], ...] = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -155,9 +157,10 @@ def _logical_body_lines(func: ast.FunctionDef | ast.AsyncFunctionDef, codeful_li
     """Count the function's logical body lines.
 
     EXCLUDES the signature (we start from the first body statement, so a multi-line ``def`` header is
-    never counted), the leading docstring, blank lines, and comment-only lines (the latter two are
-    excluded because they are absent from ``codeful_lines``). ``async def`` is handled identically
-    because both node types share the ``body`` attribute.
+    never counted) and the decorator lines above it (decorators are not attributed to the function —
+    part of the module's documented under-count bias), the leading docstring, blank lines, and
+    comment-only lines (the latter two are excluded because they are absent from ``codeful_lines``).
+    ``async def`` is handled identically because both node types share the ``body`` attribute.
 
     Lines belonging to a *nested* ``def``/``class`` are intentionally still counted toward the
     enclosing function's length (a function that inlines a large helper is genuinely long as written,
@@ -252,8 +255,9 @@ def _nesting_bodies(stmt: ast.stmt) -> list[list[ast.stmt]]:
 
     For an ``if/elif/else`` ladder the whole chain is one construct: every branch body (the ``if``
     body, each chained ``elif`` body, and the trailing ``else``) is exactly ONE level deeper — the
-    chain links between them do not stack depth. For ``try`` we include ``finally`` and every
-    ``except`` handler; loops/``with`` include their ``body`` and any real ``else``.
+    chain links between them do not stack depth. For ``try``/``except*`` we include ``finally`` and
+    every handler; loops/``with`` include their ``body`` and any real ``else``; ``match`` includes
+    every case-arm body.
     """
     if isinstance(stmt, ast.If):
         bodies: list[list[ast.stmt]] = []
@@ -276,6 +280,9 @@ def _nesting_bodies(stmt: ast.stmt) -> list[list[ast.stmt]]:
     for handler in getattr(stmt, "handlers", []) or []:
         if handler.body:
             bodies.append(handler.body)
+    for case in getattr(stmt, "cases", []) or []:  # ``match`` case arms (match_case bodies)
+        if case.body:
+            bodies.append(case.body)
     return [b for b in bodies if b]
 
 

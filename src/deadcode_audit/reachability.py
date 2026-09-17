@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from deadcode_audit import diffscope
+from deadcode_audit.framework import safe_parse
 
 # Advisory confidence classes, ordered most- to least-likely-actually-dead (the Vulture-confidence /
 # SonarQube-severity model applied to reachability). A public symbol with no resolved consumer is:
@@ -45,7 +47,7 @@ from deadcode_audit import diffscope
 # not dead code. The reason string is the SSOT — the rank/label maps key off it so output ordering and
 # the summary stay in sync.
 _ADVISORY_ORPHANED = "no runtime or test reference anywhere (strongest dead candidate)"
-_ADVISORY_TEST_ONLY = "no runtime consumer; referenced only by tests (unwired / speculative API)"
+ADVISORY_TEST_ONLY = "no runtime consumer; referenced only by tests (unwired / speculative API)"
 _ADVISORY_UNRESOLVED = "name occurs but does not resolve to a reference (same-name collision or dynamic use)"
 _ADVISORY_DECORATED = "decorated; may be framework-registered or dynamically invoked"
 _ADVISORY_TEST_SUPPORT = "no runtime consumer; named *_for_tests (test-support hook — expected, not dead)"
@@ -54,16 +56,16 @@ _ADVISORY_TEST_SUPPORT = "no runtime consumer; named *_for_tests (test-support h
 # pytest fixture-helper idiom). Matched on the symbol name only — a class-level invariant, not a value.
 _TEST_SUPPORT_SUFFIXES = ("_for_tests", "_for_test", "_for_testing")
 
-_ADVISORY_RANK = {
+ADVISORY_RANK = {
     _ADVISORY_ORPHANED: 0,
-    _ADVISORY_TEST_ONLY: 1,
+    ADVISORY_TEST_ONLY: 1,
     _ADVISORY_UNRESOLVED: 2,
     _ADVISORY_DECORATED: 3,
     _ADVISORY_TEST_SUPPORT: 4,
 }
-_ADVISORY_LABEL = {
+ADVISORY_LABEL = {
     _ADVISORY_ORPHANED: "orphaned             (no runtime/test reference anywhere — strongest dead candidate)",
-    _ADVISORY_TEST_ONLY: "test-only-reachable  (product-dead candidates — remove or wire)",
+    ADVISORY_TEST_ONLY: "test-only-reachable  (product-dead candidates — remove or wire)",
     _ADVISORY_UNRESOLVED: "name unresolved      (same-name collision / dynamic-dispatch suspects)",
     _ADVISORY_DECORATED: "decorated            (framework-registered; usually live, verify if unsure)",
     _ADVISORY_TEST_SUPPORT: "test-support hook    (named *_for_tests; intentional, not dead)",
@@ -85,7 +87,7 @@ class PublicSymbolDefinition:
     decorated: bool = False
 
 
-def _public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
+def public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
     """Return top-level public function and class definitions for a module.
 
     Decorated symbols are INCLUDED (with ``decorated=True``) — unlike the old skip-all — so
@@ -94,7 +96,13 @@ def _public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
     """
     # utf-8-sig: tolerate UTF-8-BOM files (U+FEFF) in target corpora, which crash ast.parse.
     source = (diffscope.REPO_ROOT / path).read_text(encoding="utf-8-sig")
-    tree = ast.parse(source)
+    tree = safe_parse(source)
+    if tree is None:
+        # An unparseable file must not crash the gate with a traceback. Warn and continue: the
+        # blocking floor is raw-text grep, which still sees the file's names, so skipping the
+        # resolver for this file can only cost advisory coverage, never hide a live consumer.
+        print(f"warning: {path.as_posix()} does not parse; skipping its symbol definitions", file=sys.stderr)
+        return []
     definitions: list[PublicSymbolDefinition] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -113,7 +121,7 @@ def _public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
 
 def _runtime_reference_locations(symbol: str) -> list[tuple[Path, int]]:
     """Return runtime source locations where the symbol's name appears (word-boundary grep)."""
-    lines = diffscope._git_lines("grep", "-n", "-w", "-e", symbol, "--", *(p.as_posix() for p in diffscope.source_roots()))
+    lines = diffscope.git_lines("grep", "-n", "-w", "-e", symbol, "--", *(p.as_posix() for p in diffscope.source_roots()))
     locations: list[tuple[Path, int]] = []
     for entry in lines:
         path_text, line_text, _ = entry.split(":", 2)
@@ -228,7 +236,12 @@ def collect_module_facts(source: str, path: Path) -> ModuleFacts:
     """Extract import edges + name/attribute uses + ``__all__`` + public defs from a module."""
     dotted = module_dotted_name(path)
     is_package = path.name == "__init__.py"
-    tree = ast.parse(source)
+    tree = safe_parse(source)
+    if tree is None:
+        # Unparseable corpus file: warn and contribute no facts. Safe by construction — the
+        # blocking floor is raw-text grep, not this resolver (a resolver miss only adds noise).
+        print(f"warning: {path.as_posix()} does not parse; treating as no imports/uses", file=sys.stderr)
+        return ModuleFacts(dotted=dotted or "", is_package=is_package)
 
     from_imports: list[tuple[str, str, str]] = []
     star_from: set[str] = set()
@@ -345,7 +358,7 @@ def resolved_reference_exists(
     return False
 
 
-def _runtime_corpus_files() -> list[Path]:
+def runtime_corpus_files() -> list[Path]:
     """Every runtime ``src`` + ``scripts`` Python file, repo-relative (the resolver corpus)."""
     return diffscope.runtime_files()
 
@@ -372,7 +385,7 @@ def classify_unresolved(
         if has_test_ref:
             if _is_test_support_name(definition.symbol):
                 return ("advisory", _ADVISORY_TEST_SUPPORT)
-            return ("advisory", _ADVISORY_TEST_ONLY)
+            return ("advisory", ADVISORY_TEST_ONLY)
         if orphaned_blocks:
             return ("block", None)
         return ("advisory", _ADVISORY_ORPHANED)
@@ -390,7 +403,7 @@ def runtime_consumer_check(paths: list[Path]) -> int:
 
     definitions: list[PublicSymbolDefinition] = []
     for path in changed_runtime_paths:
-        definitions.extend(_public_symbol_definitions(path))
+        definitions.extend(public_symbol_definitions(path))
     if not definitions:
         print("No changed public symbols for consumer check")
         return 0
@@ -403,7 +416,7 @@ def runtime_consumer_check(paths: list[Path]) -> int:
     }
 
     # Resolver refinement: does each symbol's name resolve to a real reference?
-    facts = [collect_module_facts(diffscope.read_text(p), p) for p in _runtime_corpus_files()]
+    facts = [collect_module_facts(diffscope.read_text(p), p) for p in runtime_corpus_files()]
     reexport_map = build_reexport_map(facts)
 
     blocking: list[PublicSymbolDefinition] = []
@@ -436,15 +449,15 @@ def runtime_consumer_check(paths: list[Path]) -> int:
         # product-dead candidates surface at the top instead of being buried under framework noise.
         advisory.sort(
             key=lambda item: (
-                _ADVISORY_RANK.get(item[1], 99),
+                ADVISORY_RANK.get(item[1], 99),
                 item[0].file_path.as_posix(),
                 item[0].line,
             )
         )
         by_class = Counter(reason for _definition, reason in advisory)
         print(f"[advisory, non-blocking] {len(advisory)} changed public symbol(s) with no RESOLVED consumer:")
-        for reason in sorted(by_class, key=lambda r: _ADVISORY_RANK.get(r, 99)):
-            print(f"  [{by_class[reason]:>3}] {_ADVISORY_LABEL.get(reason, reason)}")
+        for reason in sorted(by_class, key=lambda r: ADVISORY_RANK.get(r, 99)):
+            print(f"  [{by_class[reason]:>3}] {ADVISORY_LABEL.get(reason, reason)}")
         for definition, reason in advisory:
             print(f"  {definition.file_path.as_posix()}:{definition.line} {definition.symbol} -> {reason}")
         print("  -> ranked by deadness confidence; the test-only-reachable group is the one to act on first")

@@ -8,9 +8,12 @@ so two functions that merely share a control-flow skeleton but call disjoint API
 from __future__ import annotations
 
 import ast
+import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
+
+from deadcode_audit.framework import safe_parse
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,10 +35,14 @@ class CloneFinding:
 
 
 def _local_binding_names(node: _FuncDef) -> set[str]:
-    """Names bound locally in a function: parameters + anything assigned/iterated/with-as.
+    """Names bound locally in a function: parameters + anything assigned/iterated/with-as,
+    except-as names, nested def/class names, and nested def/lambda parameters.
 
-    Free names (called functions, imported symbols, module globals) are deliberately NOT
-    included, so two functions that call *different* APIs do not look like clones.
+    The last three bind through plain ``str`` attributes on their AST nodes (``ExceptHandler.name``,
+    ``FunctionDef.name``, nested ``ast.arg``), not Store-context ``Name`` nodes, so they must be
+    collected explicitly — otherwise a clone differing only in one of those names scored below 1.0.
+    Free names (called functions, imported symbols, module globals) are deliberately NOT included,
+    so two functions that call *different* APIs do not look like clones.
     """
     names: set[str] = set()
     args = node.args
@@ -48,6 +55,15 @@ def _local_binding_names(node: _FuncDef) -> set[str]:
     for sub in ast.walk(node):
         if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
             names.add(sub.id)
+        elif isinstance(sub, ast.arg):
+            # Nested def/lambda parameters (the outer's own args were added above).
+            names.add(sub.arg)
+        elif isinstance(sub, ast.ExceptHandler) and sub.name:
+            names.add(sub.name)
+        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and sub is not node:
+            # Skip the walked root itself so the function's own name keeps its free-name status
+            # (a self-recursive call stays part of the semantic signature).
+            names.add(sub.name)
     return names
 
 
@@ -93,13 +109,20 @@ def normalize_function(node: _FuncDef) -> list[str]:
 
 
 def clone_similarity(a: list[str], b: list[str]) -> float:
-    """Token-sequence similarity in [0, 1] (1.0 == structurally identical)."""
+    """Token-sequence similarity in [0, 1] (1.0 == structurally identical).
+
+    ``autojunk=False`` keeps the heuristic honest: the default ``autojunk=True`` silently treats
+    any token occurring in >1% of a >=200-token sequence as junk, so long functions full of
+    common tokens (``Name``, ``Load``, ...) get inflated ratios. Token lists here are exactly
+    that shape, so junk heuristics would distort exactly the long-function comparisons the
+    length pre-filter lets through.
+    """
     if not a and not b:
         return 1.0
-    return SequenceMatcher(None, a, b).ratio()
+    return SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
-def _semantic_signature(tokens: tuple[str, ...]) -> frozenset[str]:
+def semantic_signature(tokens: tuple[str, ...]) -> frozenset[str]:
     """Free names (``#name``) and attribute/method names (``.attr``) — the *semantic* surface.
 
     Two functions can share a control-flow skeleton yet be unrelated; requiring overlap here
@@ -108,7 +131,7 @@ def _semantic_signature(tokens: tuple[str, ...]) -> frozenset[str]:
     return frozenset(token for token in tokens if token[:1] in "#.")
 
 
-def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+def jaccard(a: frozenset[str], b: frozenset[str]) -> float:
     if not a and not b:
         return 1.0
     if not a or not b:
@@ -117,7 +140,9 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
 
 
 @dataclass(frozen=True)
-class _FuncRecord:
+class FuncRecord:
+    """A function's clone fingerprint: location, normalised token stream, semantic surface."""
+
     file_path: Path
     line: int
     symbol: str
@@ -125,19 +150,26 @@ class _FuncRecord:
     semantic: frozenset[str]
 
 
-def collect_functions(source: str, path: Path) -> list[_FuncRecord]:
-    """Return a fingerprint record for every top-level and nested function definition."""
-    records: list[_FuncRecord] = []
-    for node in ast.walk(ast.parse(source)):
+def collect_functions(source: str, path: Path) -> list[FuncRecord]:
+    """Return a fingerprint record for every top-level and nested function definition.
+
+    An unparseable file yields no records (with a stderr warning) instead of crashing the caller.
+    """
+    tree = safe_parse(source)
+    if tree is None:
+        print(f"warning: {path.as_posix()} does not parse; skipping clone fingerprinting", file=sys.stderr)
+        return []
+    records: list[FuncRecord] = []
+    for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             tokens = tuple(normalize_function(node))
-            records.append(_FuncRecord(path, node.lineno, node.name, tokens, _semantic_signature(tokens)))
+            records.append(FuncRecord(path, node.lineno, node.name, tokens, semantic_signature(tokens)))
     return records
 
 
 def find_near_duplicate_functions(
-    targets: list[_FuncRecord],
-    corpus: list[_FuncRecord],
+    targets: list[FuncRecord],
+    corpus: list[FuncRecord],
     *,
     threshold: float,
     min_tokens: int,
@@ -155,7 +187,7 @@ def find_near_duplicate_functions(
     for target in targets:
         if len(target.tokens) < min_tokens:
             continue
-        best: tuple[float, _FuncRecord] | None = None
+        best: tuple[float, FuncRecord] | None = None
         for other in corpus:
             if other is target or len(other.tokens) < min_tokens:
                 continue
@@ -168,7 +200,7 @@ def find_near_duplicate_functions(
             shorter, longer = sorted((len(target.tokens), len(other.tokens)))
             if shorter + longer and (2 * shorter) / (shorter + longer) < threshold:
                 continue
-            if _jaccard(target.semantic, other.semantic) < semantic_threshold:
+            if jaccard(target.semantic, other.semantic) < semantic_threshold:
                 continue
             score = clone_similarity(list(target.tokens), list(other.tokens))
             if score >= threshold and (best is None or score > best[0]):

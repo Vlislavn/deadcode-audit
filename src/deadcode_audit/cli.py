@@ -60,7 +60,7 @@ def _cmd_mutation_targets(args: argparse.Namespace) -> int:
 
 
 def _cmd_run_mutmut_changed(args: argparse.Namespace) -> int:
-    return mutation._run_mutmut_for_paths(
+    return mutation.run_mutmut_for_paths(
         mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch))
     )
 
@@ -79,7 +79,12 @@ def _cmd_redundancy(args: argparse.Namespace) -> int:
     return redundancy.run_check(args.compare_branch, threshold=args.clone_threshold, min_tokens=args.min_tokens)
 
 
-def _run_scan(args: argparse.Namespace) -> scan_mod.ScanResult:
+def _execute_scan(args: argparse.Namespace) -> tuple[scan_mod.ScanResult, config.DeadcodeConfig]:
+    """Resolve target files and run all detectors once; return the result and the loaded config.
+
+    Returning the config alongside the result lets ``ci`` read ``fail_below`` without loading
+    the config a second time.
+    """
     from deadcode_audit.detectors import ALL_DETECTORS
 
     cfg = config.load_deadcode_config(diffscope.REPO_ROOT)
@@ -91,11 +96,18 @@ def _run_scan(args: argparse.Namespace) -> scan_mod.ScanResult:
     )
     if not files and not args.changed:
         raise ValueError("No Python source files found; check target paths/source_roots")
-    return scan_mod.run_scan(files, ALL_DETECTORS, cfg)
+    return scan_mod.run_scan(files, ALL_DETECTORS, cfg), cfg
+
+
+def _run_scan(args: argparse.Namespace) -> scan_mod.ScanResult:
+    return _execute_scan(args)[0]
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
     result = _run_scan(args)
+    modes = [name for name, requested in (("json", args.json), ("sarif", args.sarif), ("prompt", args.prompt)) if requested]
+    if len(modes) > 1:
+        print(f"warning: multiple output formats requested ({', '.join(modes)}); rendering {modes[0]}", file=sys.stderr)
     if args.json:
         print(output.render_json(result.diagnostics, result.score, files_scanned=result.file_count))
         return 0
@@ -106,6 +118,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(output.render_agent_prompt(result.diagnostics))
         return 0
     print(output.render_terminal(result.diagnostics, result.score))
+    # Only terminal-mode scans append history: --json/--sarif/--prompt and `ci` never touch the
+    # trend file, so machine/automated runs cannot skew the human score history.
     if not args.no_history:
         from datetime import UTC, datetime
 
@@ -125,8 +139,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci(args: argparse.Namespace) -> int:
-    result = _run_scan(args)
-    cfg = config.load_deadcode_config(diffscope.REPO_ROOT)
+    result, cfg = _execute_scan(args)
     fail_below = args.fail_below if args.fail_below is not None else (cfg.fail_below or 0)
     has_error = any(d.severity is Severity.ERROR for d in result.diagnostics)
     print(
@@ -274,7 +287,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("rules", help="List detector rules")
 
     trend_parser = subparsers.add_parser("trend", help="Show score history")
-    trend_parser.add_argument("--limit", type=int, default=20)
+    trend_parser.add_argument("--limit", type=int, default=20, help="Max records to show (0 = all)")
 
     # On-demand, advisory: full all-pairs semantic overlap audit (whole tree, NOT diff-scoped).
     overlaps_parser = subparsers.add_parser(
@@ -282,7 +295,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="All-pairs function-overlap audit (advisory)",
     )
     overlaps_parser.add_argument("--threshold", type=float, default=0.55)
-    overlaps_parser.add_argument("--top", type=int, default=50, help="Keep the top N pairs (0 = all)")
+    overlaps_parser.add_argument("--top", type=int, default=50, help="Keep the top N pairs (<= 0 = all)")
     overlaps_parser.add_argument("--min-tokens", type=int, default=40)
     overlaps_parser.add_argument(
         "--no-embed",
@@ -325,6 +338,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the dead-code gate CLI."""
+    """Run the dead-code gate CLI.
+
+    Expected operational failures — missing target files, invalid config/env values, failed
+    tool invocations (``ValueError``/``TypeError``/``RuntimeError``/``OSError``) — print a
+    one-line message to stderr and exit 2 instead of a raw traceback; anything else is a
+    genuine bug and still surfaces as one.
+    """
     args = _build_parser().parse_args(argv)
-    return COMMANDS[args.command](args)
+    try:
+        return COMMANDS[args.command](args)
+    except (ValueError, TypeError, RuntimeError, OSError) as exc:
+        print(f"deadcode-audit error: {exc}", file=sys.stderr)
+        return 2

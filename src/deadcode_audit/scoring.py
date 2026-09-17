@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from deadcode_audit.diagnostic import Diagnostic, Severity
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 SEVERITY_PENALTY: dict[Severity, float] = {
     Severity.ERROR: 3.0,
@@ -30,7 +34,10 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "format": 0.3,
 }
 
-# Style/maintainability rules contribute HALF weight (genuine slop, not house style, drives the number).
+# Fallback style-rule set used ONLY when a caller cannot supply the detector specs (the
+# ``spec.style`` flag is the actual source of truth — :func:`calculate_score`'s ``style_rules``
+# parameter). Style/maintainability rules contribute HALF weight (genuine slop, not house
+# style, drives the number).
 STYLE_RULES: frozenset[str] = frozenset(
     {
         "ai-slop/trivial-comment",
@@ -69,17 +76,24 @@ def calculate_score(
     source_file_count: int | None = None,
     good_threshold: int = GOOD_THRESHOLD,
     ok_threshold: int = OK_THRESHOLD,
+    style_rules: Collection[str] | None = None,
 ) -> ScoreResult:
-    """Return the 0–100 score + label for a set of diagnostics."""
+    """Return the 0–100 score + label for a set of diagnostics.
+
+    ``style_rules`` is the set of rule ids that carry half weight. Scan callers derive it from the
+    active detectors' ``RuleSpec.style`` flags (the documented contract); when omitted, the
+    builtin :data:`STYLE_RULES` fallback keeps direct-call behaviour stable.
+    """
     if not diagnostics:
         return ScoreResult(score=100, label="Healthy")
 
+    style_set = STYLE_RULES if style_rules is None else frozenset(style_rules)
     weight_map = weights or DEFAULT_WEIGHTS
     deductions = 0.0
     for diag in diagnostics:
         penalty = SEVERITY_PENALTY.get(diag.severity, 1.0)
         engine_weight = weight_map.get(diag.engine, 1.0)
-        style_factor = 0.5 if diag.rule in STYLE_RULES else 1.0
+        style_factor = 0.5 if diag.rule in style_set else 1.0
         deductions += penalty * engine_weight * style_factor
 
     distinct_files = len({diag.file_path for diag in diagnostics})

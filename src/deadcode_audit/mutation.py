@@ -41,7 +41,7 @@ DEFAULT_MIN_KILL_RATE = 0.70
 
 def min_kill_rate() -> float:
     """Return the mutation-score floor (``DEADCODE_MUTMUT_MIN_KILL_RATE``, validated)."""
-    raw = os.environ.get("DEADCODE_MUTMUT_MIN_KILL_RATE", os.environ.get("DEADCODE_MUTMUT_MIN_KILL_RATE"))
+    raw = os.environ.get("DEADCODE_MUTMUT_MIN_KILL_RATE")
     if raw is None:
         return DEFAULT_MIN_KILL_RATE
     value = float(raw)
@@ -65,6 +65,10 @@ def mutation_gate_failures(stat: MutationGateStat) -> list[str]:
     unchecked mutants, interrupts, segfaults) stay zero-tolerance — any count
     means the measurement itself is broken. ``survived`` is gated as a mutation
     score instead: killed/(killed+survived) must reach ``min_kill_rate()``.
+    A run where NO mutant was actually checked (``killed + survived == 0``, e.g. every one
+    skipped) also blocks: ``kill_rate`` would otherwise report a meaningless 1.0 for an
+    unmeasured run. That degenerate line is listed alone when no zero-tolerance category fired
+    (with those present the run is already blocked and the list stays minimal).
     A zero-survivor policy over whole changed files was unreachable by
     construction — survivors land on pre-existing lines of touched files
     (measured on the first run that ever reached the per-mutant phase:
@@ -79,6 +83,14 @@ def mutation_gate_failures(stat: MutationGateStat) -> list[str]:
         "segfault": stat.segfault,
     }
     failures = [f"{name}={count}" for name, count in blocking_counts.items() if count > 0]
+    checked = stat.killed + stat.survived
+    total = checked + stat.skipped + sum(blocking_counts.values())
+    if total > 0 and checked == 0 and not failures:
+        # Degenerate measurement (e.g. every mutant skipped): kill_rate() reports 1.0 and no
+        # per-category counter tripped, so the gate must fail rather than pass unmeasured.
+        # When another zero-tolerance category already fired, the run is blocked anyway and
+        # the list stays minimal.
+        failures.append(f"no_mutants_checked total={total} (skipped={stat.skipped})")
     rate = kill_rate(stat)
     floor = min_kill_rate()
     if rate < floor:
@@ -120,16 +132,18 @@ def _print_mutation_gate_failure(stat: MutationGateStat) -> None:
     print(f"Mutation gate failed: {', '.join(failures)}")
 
 
-def build_mypy_targets(paths: list[Path]) -> list[Path]:
-    """Return changed files that are suitable for the narrow mypy dead-branch gate."""
-    targets = [path for path in paths if config.is_mutation_target(path)]
-    return sorted(dict.fromkeys(targets))
-
-
 def build_mutation_targets(paths: list[Path]) -> list[Path]:
-    """Return changed runtime files that should be mutated."""
+    """Return changed runtime files that should be mutated.
+
+    The mypy dead-branch gate selects the identical set (same ``is_mutation_target`` filter and
+    dedup), so ``build_mypy_targets`` below is an alias, not a second implementation.
+    """
     targets = [path for path in paths if config.is_mutation_target(path)]
     return sorted(dict.fromkeys(targets))
+
+
+#: Alias: the mypy dead-branch gate mutates exactly the mutation-target set.
+build_mypy_targets = build_mutation_targets
 
 
 def build_mutation_copy_roots(paths: list[Path]) -> list[Path]:
@@ -361,7 +375,7 @@ def _patch_stats_no_truncate() -> None:
     # that errors only in the copied ``mutants/`` tree, instead of aborting at the
     # first one. Per-mutant runs (mutant_name set) are untouched — they must keep
     # ``-x`` so a mutant is killed the instant one associated test fails.
-    _fragile_log = os.environ.get("DEADCODE_MUTMUT_FRAGILE_LOG", os.environ.get("DEADCODE_MUTMUT_FRAGILE_LOG"))
+    _fragile_log = os.environ.get("DEADCODE_MUTMUT_FRAGILE_LOG")
     if _fragile_log:
         _orig_run_tests = mm.PytestRunner.run_tests
 
@@ -400,14 +414,20 @@ def _patch_stats_no_truncate() -> None:
         mm.PytestRunner.run_tests = run_tests
 
 
-def _run_mutmut_for_paths(paths: list[Path]) -> int:
-    """Execute mutmut for the provided paths using the repo's shared config."""
+def run_mutmut_for_paths(paths: list[Path]) -> int:
+    """Execute mutmut for the provided paths using the repo's shared config.
+
+    Temporarily moves the process to ``REPO_ROOT`` (mutmut resolves ``mutants/`` and test roots
+    relative to the CWD) and restores the original CWD in the ``finally`` below, so the chdir is
+    scoped to this gate run rather than a permanent global side effect.
+    """
     if not paths:
         print("No mutation targets changed vs compare branch")
         return 0
 
     if not hasattr(os, "fork"):
         raise RuntimeError("Mutation requires POSIX fork; use Linux/macOS or WSL")
+    original_cwd = Path.cwd()
     os.chdir(diffscope.REPO_ROOT)
     _reset_mutants_dir()
 
@@ -422,8 +442,9 @@ def _run_mutmut_for_paths(paths: list[Path]) -> int:
     config_obj.also_copy = build_also_copy(list(config_obj.also_copy), config_obj.paths_to_mutate)
     config_obj.tests_dir = build_mutation_test_roots(paths)
     config_obj.mutate_only_covered_lines = True
+    # ``mutmut.__main__`` binds the same ``mutmut`` module object, so one assignment configures
+    # both namespaces (the previous double assignment set the same attribute twice).
     mutmut.config = config_obj
-    mutmut_main.mutmut.config = config_obj
     _patch_stats_no_truncate()
     _patch_pass_isolation()
     _patch_setproctitle_noop()
@@ -445,6 +466,7 @@ def _run_mutmut_for_paths(paths: list[Path]) -> int:
     finally:
         os.fork = real_fork  # type: ignore[assignment]
         os.wait = real_wait  # type: ignore[assignment]
+        os.chdir(original_cwd)
     stat = _load_mutation_gate_stat()
     print(
         f"Mutation kill rate: {kill_rate(stat):.1%} "

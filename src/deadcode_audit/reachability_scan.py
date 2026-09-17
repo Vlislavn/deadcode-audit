@@ -24,17 +24,17 @@ from pathlib import Path
 
 from deadcode_audit import diffscope
 from deadcode_audit.reachability import (
-    _ADVISORY_LABEL,
-    _ADVISORY_RANK,
-    _ADVISORY_TEST_ONLY,
+    ADVISORY_LABEL,
+    ADVISORY_RANK,
+    ADVISORY_TEST_ONLY,
     PublicSymbolDefinition,
-    _public_symbol_definitions,
-    _runtime_corpus_files,
     build_reexport_map,
     classify_unresolved,
     collect_module_facts,
     module_dotted_name,
+    public_symbol_definitions,
     resolved_reference_exists,
+    runtime_corpus_files,
 )
 
 
@@ -46,14 +46,14 @@ _IDENT = re.compile(r"[A-Za-z_]\w*")
 
 # The actionable classes — orphaned + test-only-reachable — are the consolidation/removal targets. The
 # rest (unresolved suspects, framework-decorated, test-support hooks) are mostly live or expected noise.
-_ACTIONABLE_MAX_RANK = _ADVISORY_RANK[_ADVISORY_TEST_ONLY]
+_ACTIONABLE_MAX_RANK = ADVISORY_RANK[ADVISORY_TEST_ONLY]
 
 
 def build_candidates() -> list[PublicSymbolDefinition]:
     """Every public top-level symbol in ``src/`` — the whole-tree corpus (NOT diff-scoped)."""
     candidates: list[PublicSymbolDefinition] = []
     for path in diffscope.all_src_files():
-        candidates.extend(_public_symbol_definitions(path))
+        candidates.extend(public_symbol_definitions(path))
     return candidates
 
 
@@ -85,7 +85,7 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
     candidates = build_candidates()
 
     # Read the runtime corpus once; reuse the text for BOTH the resolver facts and the occurrence index.
-    corpus_text = {path: diffscope.read_text(path) for path in _runtime_corpus_files()}
+    corpus_text = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
     facts = [collect_module_facts(text, path) for path, text in corpus_text.items()]
     reexport_map = build_reexport_map(facts)
 
@@ -115,7 +115,7 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
 
     rows.sort(
         key=lambda row: (
-            _ADVISORY_RANK.get(row[1], 99),
+            ADVISORY_RANK.get(row[1], 99),
             row[0].file_path.as_posix(),
             row[0].line,
         )
@@ -131,8 +131,8 @@ def _shown_rows(rows: list[tuple[PublicSymbolDefinition, str]], top: int) -> lis
     """
     if top <= 0:
         return rows
-    actionable = [row for row in rows if _ADVISORY_RANK.get(row[1], 99) <= _ACTIONABLE_MAX_RANK]
-    noise = [row for row in rows if _ADVISORY_RANK.get(row[1], 99) > _ACTIONABLE_MAX_RANK]
+    actionable = [row for row in rows if ADVISORY_RANK.get(row[1], 99) <= _ACTIONABLE_MAX_RANK]
+    noise = [row for row in rows if ADVISORY_RANK.get(row[1], 99) > _ACTIONABLE_MAX_RANK]
     return actionable + noise[:top]
 
 
@@ -142,8 +142,8 @@ def _class_summary(rows: list[tuple[PublicSymbolDefinition, str]]) -> list[str]:
 
     by_class: Counter[str] = Counter(reason for _definition, reason in rows)
     return [
-        f"  [{by_class[reason]:>3}] {_ADVISORY_LABEL.get(reason, reason)}"
-        for reason in sorted(by_class, key=lambda reason: _ADVISORY_RANK.get(reason, 99))
+        f"  [{by_class[reason]:>3}] {ADVISORY_LABEL.get(reason, reason)}"
+        for reason in sorted(by_class, key=lambda reason: ADVISORY_RANK.get(reason, 99))
     ]
 
 

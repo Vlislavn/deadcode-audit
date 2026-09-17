@@ -165,10 +165,13 @@ def _detect_chained_get(tree: ast.Module, path_posix: str) -> list[Diagnostic]:
     Guards (each rename-proof, structural):
       * a single ``.get(...)`` never fires (the receiver must itself be a get call);
       * any explicit second-arg default (``{}`` or otherwise) means a deliberate, crash-safe chain;
-      * keyword-bearing or >2-arg ``.get`` look-alikes are not treated as ``dict.get`` at all.
+      * keyword-bearing or >2-arg ``.get`` look-alikes are not treated as ``dict.get`` at all;
+      * a 3+ chain is reported ONCE, at its outermost crashing pair — the inner pairs describe the
+        same crash, so emitting one finding per pair was pure duplication.
     """
     findings: list[Diagnostic] = []
-    for node in ast.walk(tree):
+    reported_chain: set[int] = set()  # ids of inner get-calls already covered by an emitted finding
+    for node in ast.walk(tree):  # BFS: outer calls are visited before the calls nested in them
         if not isinstance(node, ast.Call):
             continue
         outer_is_get, _ = _get_call_default(node)
@@ -182,6 +185,8 @@ def _detect_chained_get(tree: ast.Module, path_posix: str) -> list[Diagnostic]:
         inner_is_get, inner_default = _get_call_default(receiver)
         if not inner_is_get:
             continue
+        if id(node) in reported_chain:
+            continue  # an outer get of this same chain already reported the crash risk
         # Fire ONLY when the intermediate get has no default: a miss yields None and the outer
         # `None.get(...)` raises AttributeError. An explicit default (incl. `{}`) is a deliberate,
         # crash-safe defensive chain and is intentionally spared.
@@ -194,6 +199,14 @@ def _detect_chained_get(tree: ast.Module, path_posix: str) -> list[Diagnostic]:
                     message="chained `.get(...).get(...)` with no intermediate default risks AttributeError on a miss",
                 )
             )
+            # Mark every get-call below this one so longer chains do not re-report the same crash.
+            chain: ast.expr = receiver
+            while isinstance(chain, ast.Call):
+                reported_chain.add(id(chain))
+                nested = chain.func.value if isinstance(chain.func, ast.Attribute) else None
+                if not isinstance(nested, ast.Call):
+                    break
+                chain = nested
     return findings
 
 

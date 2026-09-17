@@ -1,4 +1,4 @@
-"""Tests for the security detector (hardcoded-secret, eval, shell-injection).
+"""Tests for the security detector (hardcoded-secret, eval, shell-injection, assert-usage).
 
 Each rule gets >=3 varied positives (different identifiers/modules, proving the rule encodes a
 principle and not one snippet) and >=3 adversarial negatives (legitimate near-misses). Trigger
@@ -14,6 +14,7 @@ from deadcode_audit.framework import build_file_context
 SECRET = "security/hardcoded-secret"
 EVAL = "security/eval"
 SHELL = "security/shell-injection"
+ASSERT = "security/assert-usage"
 
 # Tokens reconstructed so they never appear whole in this file (mirrors the module's own guard).
 _AKIA = "AK" + "IA" + "1234567890ABCDEF"  # AWS access-key id shape: prefix + 16 alnum
@@ -29,7 +30,7 @@ def _rule_ids(path: str, source: str) -> list[str]:
 
 def test_rules_registry_covers_every_emitted_id() -> None:
     declared = {spec.rule for spec in rules}
-    assert declared == {SECRET, EVAL, SHELL}
+    assert declared == {SECRET, EVAL, SHELL, ASSERT}
 
 
 # --- security/hardcoded-secret : POSITIVES ----------------------------------------------------
@@ -228,3 +229,68 @@ def test_credential_named_field_with_opaque_value_still_fires() -> None:
     opaque = "a1B2" + "c3D4e5F6g7H8i9J0klmn"
     source = "api_key = " + repr(opaque) + "\n"
     assert SECRET in _rule_ids("src/svc/conf.py", source)
+
+
+# --- security/assert-usage : POSITIVES --------------------------------------------------------
+
+
+def test_assert_module_level_condition_fires() -> None:
+    # A plain runtime guard written as an assert: removed entirely under python -O/-OO.
+    source = "def deploy(env):\n    assert env.is_production_ready\n    return env\n"
+    assert _rule_ids("src/ops/deploy.py", source).count(ASSERT) == 1
+
+
+def test_assert_with_message_in_function_fires() -> None:
+    # Message-carrying assert inside a function body; None-narrowing condition.
+    source = 'def load(cfg):\n    assert cfg is not None, "config must exist"\n    return cfg\n'
+    assert _rule_ids("src/app/loader.py", source).count(ASSERT) == 1
+
+
+def test_assert_in_method_body_fires() -> None:
+    # Nested scope + attribute condition: a different shape than the function-level positives.
+    source = (
+        "class Gateway:\n"
+        "    def dispatch(self, payload):\n"
+        "        assert payload.signed, 'unsigned payload'\n"
+        "        return self._send(payload)\n"
+    )
+    assert _rule_ids("src/net/gateway.py", source).count(ASSERT) == 1
+
+
+def test_assert_false_guard_fires() -> None:
+    # `assert False` marks unreachable flow by relying on the assert at runtime -> hazard too.
+    source = 'def unreachable_point():\n    assert False, "handled upstream"\n'
+    assert ASSERT in _rule_ids("src/state/machine.py", source)
+
+
+def test_assert_condition_does_not_trip_secret_rule() -> None:
+    # Discrimination: a comparison inside an assert is a condition, not a credential assignment.
+    source = "def login(user, expected):\n    assert user.token == expected\n"
+    assert _rule_ids("src/auth/session.py", source) == [ASSERT]
+
+
+# --- security/assert-usage : ADVERSARIAL NEGATIVES --------------------------------------------
+
+
+def test_assert_in_tests_dir_not_flagged() -> None:
+    # is_test_path tests/-directory branch: tests are the one legitimate assert habitat.
+    source = "def check_pipeline(items):\n    assert len(items) > 0\n"
+    assert ASSERT not in _rule_ids("tests/test_pipeline.py", source)
+
+
+def test_assert_in_test_prefixed_file_not_flagged() -> None:
+    # is_test_path name branch: a test_-prefixed file is a test file wherever it lives.
+    source = "def check_units(x):\n    assert x\n"
+    assert ASSERT not in _rule_ids("src/prod/test_units.py", source)
+
+
+def test_assert_never_call_is_not_an_assert_statement() -> None:
+    # typing.assert_never is a CALL that raises at runtime — it survives -O — not an ast.Assert.
+    source = "import typing\n\ndef exhaust(value):\n    typing.assert_never(value)\n"
+    assert _rule_ids("src/types/narrow.py", source) == []
+
+
+def test_debug_flag_branch_is_not_an_assert_statement() -> None:
+    # `if __debug__:` is an If node, not an Assert — pins the rule's shape boundary.
+    source = "if __debug__:\n    print('debug path')\n"
+    assert _rule_ids("src/flags/debug.py", source) == []

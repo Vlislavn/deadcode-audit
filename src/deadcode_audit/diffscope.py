@@ -24,20 +24,31 @@ _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+
 
 
 def _git_output(*args: str) -> str:
-    """Return stdout for a git command executed from the repository root."""
+    """Return stdout for a git command executed from the repository root.
+
+    Output is decoded as UTF-8 with replacement (``text=True`` alone would use the locale
+    encoding, so a non-UTF-8 environment could raise ``UnicodeDecodeError`` mid-scan). Failures
+    raise a :class:`RuntimeError` that carries git's stderr — the exit code alone does not say
+    what went wrong.
+    """
     completed = subprocess.run(
         ["git", "-c", "core.quotepath=false", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if completed.returncode != 0 and not (args[0] == "grep" and completed.returncode == 1):
-        completed.check_returncode()
+        raise RuntimeError(
+            f"git {' '.join(args)} failed with exit code {completed.returncode}: "
+            f"{completed.stderr.strip()}"
+        )
     return completed.stdout.strip()
 
 
-def _git_lines(*args: str) -> list[str]:
+def git_lines(*args: str) -> list[str]:
     """Return stdout lines for a git command executed from the repository root."""
     output = _git_output(*args)
     if not output:
@@ -54,6 +65,8 @@ def _resolve_compare_ref(compare_branch: str) -> str:
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode == 0:
             return candidate

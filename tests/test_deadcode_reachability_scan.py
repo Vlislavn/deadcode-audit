@@ -16,7 +16,7 @@ from deadcode_audit.cli import main
 from deadcode_audit.reachability import (
     _ADVISORY_DECORATED,
     _ADVISORY_ORPHANED,
-    _ADVISORY_TEST_ONLY,
+    ADVISORY_TEST_ONLY,
     _ADVISORY_TEST_SUPPORT,
     _ADVISORY_UNRESOLVED,
     PublicSymbolDefinition,
@@ -61,7 +61,7 @@ def test_scan_classifies_and_ranks_across_classes(
         _def("staged_export", file="src/g.py", line=50),  # unwired, test-covered
     ]
     monkeypatch.setattr(reachability_scan, "build_candidates", lambda: defs)
-    monkeypatch.setattr(reachability_scan, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(reachability_scan, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(reachability_scan, "resolved_reference_exists", lambda *_a, **_k: False)
     # Only render + dynamic_knob occur elsewhere in runtime (a collision / a dynamic string).
     monkeypatch.setattr(
@@ -82,7 +82,7 @@ def test_scan_classifies_and_ranks_across_classes(
     reason_by_symbol = {definition.symbol: reason for definition, reason in rows}
 
     assert reason_by_symbol["widget_unused"] == _ADVISORY_ORPHANED
-    assert reason_by_symbol["staged_export"] == _ADVISORY_TEST_ONLY
+    assert reason_by_symbol["staged_export"] == ADVISORY_TEST_ONLY
     # occurs-in-runtime symbols are UNRESOLVED, NOT orphaned — the grep-floor invariant holds whole-tree
     assert reason_by_symbol["render"] == _ADVISORY_UNRESOLVED
     assert reason_by_symbol["dynamic_knob"] == _ADVISORY_UNRESOLVED
@@ -95,7 +95,7 @@ def test_scan_classifies_and_ranks_across_classes(
 
 def test_scan_never_blocks_via_run(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(reachability_scan, "build_candidates", lambda: [])
-    monkeypatch.setattr(reachability_scan, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(reachability_scan, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(reachability_scan, "_test_reference_names", lambda _names: set())
     assert reachability_scan.run(top=0, as_json=False) == 0  # advisory: always exit 0
     assert "reachability scan: 0 src public symbol(s)" in capsys.readouterr().out
@@ -111,7 +111,7 @@ def test_top_truncates_only_noise_never_actionable(
         _def("noise_d", file="src/d.py", line=4),
     ]
     monkeypatch.setattr(reachability_scan, "build_candidates", lambda: defs)
-    monkeypatch.setattr(reachability_scan, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(reachability_scan, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(reachability_scan, "resolved_reference_exists", lambda *_a, **_k: False)
     # the three noise symbols occur elsewhere -> UNRESOLVED (lower-confidence, truncatable)
     monkeypatch.setattr(

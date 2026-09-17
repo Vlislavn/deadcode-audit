@@ -303,6 +303,15 @@ def test_kill_rate_with_no_checked_mutants_is_full() -> None:
     assert mutation.kill_rate(stat) == 1.0
 
 
+def test_mutation_gate_blocks_when_no_mutant_was_checked() -> None:
+    """A fully skipped run checked nothing (kill_rate would read 1.0): the gate must fail
+    instead of passing an unmeasured run. Mixed runs keep treating skipped as out-of-scope."""
+    stat = _mutation_stat(killed=0, skipped=2)
+
+    assert mutation_gate_failures(stat) == ["no_mutants_checked total=2 (skipped=2)"]
+    assert mutation_gate_exit_code(stat) == 1
+
+
 def test_mutation_gate_fails_for_other_blocking_statuses() -> None:
     """Harness-health categories stay zero-tolerance regardless of kill rate."""
     stat = _mutation_stat(
@@ -632,7 +641,7 @@ def test_public_symbol_definitions_flags_decorated_and_skips_private(
         encoding="utf-8",
     )
 
-    definitions = reachability._public_symbol_definitions(Path("m.py"))
+    definitions = reachability.public_symbol_definitions(Path("m.py"))
 
     assert [(d.symbol, d.decorated) for d in definitions] == [("routed", True), ("plain", False)]
 

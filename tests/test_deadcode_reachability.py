@@ -223,11 +223,11 @@ def _drive_consumer_check(monkeypatch: pytest.MonkeyPatch, *, has_test_ref: bool
 
     monkeypatch.setattr(
         r,
-        "_public_symbol_definitions",
+        "public_symbol_definitions",
         lambda _p: [r.PublicSymbolDefinition(Path("src/x.py"), "thing", 10, False)],
     )
     monkeypatch.setattr(r, "_runtime_reference_locations", lambda _s: [])  # no src/scripts consumer
-    monkeypatch.setattr(r, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(r, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(r, "resolved_reference_exists", lambda *_a, **_k: False)
     monkeypatch.setattr(r, "_has_test_reference", lambda _s: has_test_ref)
     return r.runtime_consumer_check([Path("src/x.py")])
@@ -268,7 +268,7 @@ def test_consumer_check_ranks_advisories_by_deadness_confidence(
         Path("src/api.py"): r.PublicSymbolDefinition(Path("src/api.py"), "staged_export", 7, decorated=False),
         Path("src/dup.py"): r.PublicSymbolDefinition(Path("src/dup.py"), "ambient_label", 9, decorated=False),
     }
-    monkeypatch.setattr(r, "_public_symbol_definitions", lambda p: [defs[p]])
+    monkeypatch.setattr(r, "public_symbol_definitions", lambda p: [defs[p]])
     # Only ``ambient_label`` occurs elsewhere in runtime code (so it is "unresolved", not orphaned);
     # the other two have no runtime occurrence at all.
     monkeypatch.setattr(
@@ -276,7 +276,7 @@ def test_consumer_check_ranks_advisories_by_deadness_confidence(
         "_runtime_reference_locations",
         lambda s: [(Path("src/elsewhere.py"), 1)] if s == "ambient_label" else [],
     )
-    monkeypatch.setattr(r, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(r, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(r, "resolved_reference_exists", lambda *_a, **_k: False)
     monkeypatch.setattr(r, "_has_test_reference", lambda s: s == "staged_export")  # only the export is test-covered
 
@@ -304,11 +304,11 @@ def test_consumer_check_demotes_test_support_named_symbols(
 
     monkeypatch.setattr(
         r,
-        "_public_symbol_definitions",
+        "public_symbol_definitions",
         lambda _p: [r.PublicSymbolDefinition(Path("src/x.py"), "refresh_for_testing", 12, False)],
     )
     monkeypatch.setattr(r, "_runtime_reference_locations", lambda _s: [])  # no src/scripts consumer
-    monkeypatch.setattr(r, "_runtime_corpus_files", lambda: [])
+    monkeypatch.setattr(r, "runtime_corpus_files", lambda: [])
     monkeypatch.setattr(r, "resolved_reference_exists", lambda *_a, **_k: False)
     monkeypatch.setattr(r, "_has_test_reference", lambda _s: True)
 

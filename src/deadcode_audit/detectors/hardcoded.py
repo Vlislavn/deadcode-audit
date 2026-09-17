@@ -182,10 +182,10 @@ def _looks_like_id(value: str) -> bool:
     return False
 
 
-def _is_test_path(ctx: FileContext) -> bool:
-    """True when the file is a test module (literal ids/urls there are fixtures, not config)."""
-    posix = ctx.path.as_posix()
-    return posix.startswith("tests/") or "/tests/" in posix or posix.startswith("test_") or "/test_" in posix
+def detect(ctx: FileContext) -> list[Diagnostic]:
+    """Flag string literals wired into runtime behaviour that are shaped like URLs or provider ids."""
+    if ctx.is_test_file:
+        return []  # test fixtures legitimately inline endpoints and ids (shared test-file definition)
 
 
 def _docstring_nodes(tree: ast.Module) -> set[int]:
@@ -237,20 +237,27 @@ def _value_string_constants(tree: ast.Module, docstring_ids: set[int]) -> list[_
 
 
 def _string_operand_nodes(node: ast.expr | None) -> list[ast.Constant]:
-    """String ``Constant`` nodes that are this value directly or a top-level element of a literal collection."""
+    """String ``Constant`` nodes that are this value directly or a top-level element of a literal collection.
+
+    Collections include dict *values* (``{"endpoint": "https://..."}``) — a literal mapped into a
+    runtime dict is as wired into behaviour as a list element. Dict *keys* stay excluded: they name
+    fields (``{"Authorization": ...}``), and flagging field names cried wolf.
+    """
     if node is None:
         return []
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return [node]
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         return [elt for elt in node.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
+    if isinstance(node, ast.Dict):
+        return [value for value in node.values if isinstance(value, ast.Constant) and isinstance(value.value, str)]
     return []
 
 
 def detect(ctx: FileContext) -> list[Diagnostic]:
     """Flag string literals wired into runtime behaviour that are shaped like URLs or provider ids."""
-    if _is_test_path(ctx):
-        return []  # test fixtures legitimately inline endpoints and ids
+    if ctx.is_test_file:
+        return []  # test fixtures legitimately inline endpoints and ids (shared test-file definition)
 
     docstring_ids = _docstring_nodes(ctx.tree)
     candidates = _value_string_constants(ctx.tree, docstring_ids)

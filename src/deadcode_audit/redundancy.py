@@ -15,10 +15,12 @@ included. ``run_check`` also runs the advisory near-duplicate pass from :mod:`cl
 from __future__ import annotations
 
 import ast
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from deadcode_audit import clones, diffscope
+from deadcode_audit.framework import safe_parse
 
 # --- Redundant transform tables (semantic-principle driven, conservative) ---
 
@@ -65,6 +67,12 @@ COLLAPSIBLE_COMPOSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("sorted", "tuple"),
     }
 )
+
+# Outers for which ``outer(map(lambda a: a, it))`` is a redundant composition: the identity map
+# yields exactly ``it``'s elements, so ``list/set/tuple`` of it collapses to applying the outer to
+# ``it`` directly. For any other callable (e.g. ``print(map(lambda a: a, it))``) the wrapper is NOT
+# redundant — only the bare ``map`` rule below applies.
+_IDENTITY_MAP_CONSUMERS = frozenset({"list", "set", "tuple"})
 
 # UnaryOp operators that are their own inverse / a no-op: ``-(-x)``, ``~~x``, ``+(+x)``.
 _INVOLUTIVE_UNARY_OPS: dict[type[ast.unaryop], str] = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~"}
@@ -177,7 +185,13 @@ class _RedundancyVisitor(ast.NodeVisitor):
                     )
                 )
             # identity map: list/set/tuple(map(lambda a: a, it)) or bare map(...)
-            if inner == "map" and len(node.args[0].args) >= 1 and _is_identity_lambda(node.args[0].args[0]):  # type: ignore[attr-defined]
+            if (
+                inner == "map"
+                and outer in _IDENTITY_MAP_CONSUMERS
+                and isinstance(inner_node, ast.Call)
+                and inner_node.args
+                and _is_identity_lambda(inner_node.args[0])
+            ):
                 self.findings.append(
                     RedundancyFinding(
                         self.path, node.lineno, "identity-map", f"{outer}(map(lambda a: a, ...)) is an identity map"
@@ -247,9 +261,17 @@ class _RedundancyVisitor(ast.NodeVisitor):
 
 
 def find_redundant_transforms(source: str, path: Path) -> list[RedundancyFinding]:
-    """Return redundant-transform findings for one module's source."""
+    """Return redundant-transform findings for one module's source.
+
+    An unparseable file (syntax error, BOM, null bytes, pathological nesting) yields no findings
+    plus a stderr warning — one malformed file must never crash the caller with a traceback.
+    """
+    tree = safe_parse(source)
+    if tree is None:
+        print(f"warning: {path.as_posix()} does not parse; skipping redundancy analysis", file=sys.stderr)
+        return []
     visitor = _RedundancyVisitor(path)
-    visitor.visit(ast.parse(source))
+    visitor.visit(tree)
     return sorted(visitor.findings, key=lambda f: (f.line, f.kind))
 
 
@@ -270,7 +292,7 @@ def run_check(compare_branch: str, *, threshold: float, min_tokens: int) -> int:
                 redundancies.append(finding)
 
     # Clone detection: changed functions (touching a changed line) vs the whole src corpus.
-    corpus: list[clones._FuncRecord] = []
+    corpus: list[clones.FuncRecord] = []
     for path in diffscope.all_src_files():
         corpus.extend(clones.collect_functions(diffscope.read_text(path), path))
     changed_set = {p.as_posix() for p in changed_files}
@@ -321,7 +343,9 @@ def run_files(paths: list[str]) -> int:
         path = Path(raw)
         if path.suffix != ".py" or not path.exists():
             continue
-        findings.extend(find_redundant_transforms(path.read_text(encoding="utf-8"), path))
+        # utf-8-sig: tolerate UTF-8-BOM staged files (a BOM read as plain utf-8 surfaces as a
+        # SyntaxError inside ast.parse).
+        findings.extend(find_redundant_transforms(path.read_text(encoding="utf-8-sig"), path))
     if not findings:
         return 0
     print(f"[block] {len(findings)} reducible transformation(s):")

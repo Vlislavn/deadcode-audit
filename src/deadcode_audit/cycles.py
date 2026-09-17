@@ -174,7 +174,14 @@ def run(*, as_json: bool, advisory: bool) -> int:
             )
         )
     elif not reported:
-        print("import-cycle check: no circular imports among src/ modules")
+        if all_cycles:
+            # Only-allowlisted cycles exist: claiming zero circular imports would be false advertising.
+            print(
+                f"import-cycle check: no blocking circular imports "
+                f"({len(all_cycles)} cycle(s) allowlisted in .deadcode.yml)"
+            )
+        else:
+            print("import-cycle check: no circular imports among src/ modules")
     else:
         kind = "advisory" if advisory else "BLOCKING"
         print(f"import-cycle check ({kind}): {len(reported)} circular import group(s) among src/ modules:")
