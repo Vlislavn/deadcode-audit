@@ -7,8 +7,10 @@ mutation-tests itself: any changed file under ``scripts/deadcode/`` is a self-ta
 
 from __future__ import annotations
 
+import ast
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,17 +136,35 @@ def _print_mutation_gate_failure(stat: MutationGateStat) -> None:
     print(f"Mutation gate failed: {', '.join(failures)}")
 
 
-def build_mutation_targets(paths: list[Path]) -> list[Path]:
+def build_mutation_targets(paths: list[Path], *, compare_branch: str | None = None) -> list[Path]:
     """Return changed runtime files that should be mutated.
 
-    The mypy dead-branch gate selects the identical set (same ``is_mutation_target`` filter and
-    dedup), so ``build_mypy_targets`` below is an alias, not a second implementation.
+    Without a compare branch, preserve the path-only selection used by mypy.
+    With one, exclude only files whose current AST exactly matches the merge-base
+    AST. Added files remain targets; parsing and git failures propagate.
     """
     targets = [path for path in paths if config.is_mutation_target(path)]
-    return sorted(dict.fromkeys(targets))
+    targets = sorted(dict.fromkeys(targets))
+    if compare_branch is None:
+        return targets
+    compare_ref = diffscope._resolve_compare_ref(compare_branch)
+    merge_base = diffscope._git_output("merge-base", "HEAD", compare_ref)
+    originals = set(diffscope.git_lines("ls-tree", "-r", "--name-only", merge_base))
+    selected = []
+    for path in targets:
+        current = ast.dump(ast.parse((diffscope.REPO_ROOT / path).read_bytes()), include_attributes=False)
+        if path.as_posix() not in originals:
+            selected.append(path)
+            continue
+        original = subprocess.check_output(
+            ["git", "show", f"{merge_base}:{path.as_posix()}"], cwd=diffscope.REPO_ROOT
+        )
+        if ast.dump(ast.parse(original), include_attributes=False) != current:
+            selected.append(path)
+    return selected
 
 
-#: Alias: the mypy dead-branch gate mutates exactly the mutation-target set.
+#: Mypy retains path-only selection without the optional AST comparison.
 build_mypy_targets = build_mutation_targets
 
 

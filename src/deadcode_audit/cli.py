@@ -54,15 +54,20 @@ def _cmd_mypy_targets(args: argparse.Namespace) -> int:
 
 def _cmd_mutation_targets(args: argparse.Namespace) -> int:
     return _print_paths(
-        mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch)),
+        mutation.build_mutation_targets(
+            diffscope.changed_python_files(args.compare_branch), compare_branch=args.compare_branch
+        ),
         null_terminated=args.null,
     )
 
 
 def _cmd_run_mutmut_changed(args: argparse.Namespace) -> int:
-    return mutation.run_mutmut_for_paths(
-        mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch))
-    )
+    changed = mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch))
+    targets = mutation.build_mutation_targets(changed, compare_branch=args.compare_branch)
+    if changed and not targets:
+        print("No mutation targets: all changed runtime files are strictly AST-equivalent to compare branch")
+        return 0
+    return mutation.run_mutmut_for_paths(targets)
 
 
 def _cmd_runtime_consumer_check(args: argparse.Namespace) -> int:

@@ -51,7 +51,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Helpers | `deadcode rules`, `trend`, `changed-python-files`, `mypy-targets` — `--null` for machine output |
 
 Advisory exit 0 means the audit ran, not that the code is clean; parse errors and command failures are not a clean result.
-Diff checks compare committed HEAD against the merge base; whole-tree scans include untracked Python source.
+Diff checks compare committed HEAD against the merge base; whole-tree scans include untracked Python source. Mutation selection skips only strict AST-equivalent changes (such as comments), reports that no-op explicitly, and still selects added or behaviorally changed files.
 
 ## Extras
 
