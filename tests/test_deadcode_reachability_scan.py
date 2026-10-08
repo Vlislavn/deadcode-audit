@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from deadcode_audit import reachability_scan
-from deadcode_audit.cli import main
+from fixtures.deadcode_cli import run_deadcode_cli
 from deadcode_audit.reachability import (
     _ADVISORY_DECORATED,
     _ADVISORY_ORPHANED,
@@ -131,10 +131,24 @@ def test_top_truncates_only_noise_never_actionable(
 # --- CLI smoke over the real src/ tree (no git, in-memory floor; always exit 0) ---
 
 
-def test_cli_reachability_scan_json_exits_zero(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert main(["reachability-scan", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert "symbols" in payload and isinstance(payload["symbols"], list)
-    assert payload["count"] == len(payload["symbols"])
+def test_cli_reachability_scan_json_exits_zero(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "modules"
+    source.mkdir(parents=True)
+    (source / "library.py").write_text(
+        "def consumed():\n    return 1\n\ndef orphaned():\n    return 2\n", encoding="utf-8"
+    )
+    (source / "consumer.py").write_text("from modules.library import consumed\nvalue = consumed()\n", encoding="utf-8")
+    result = run_deadcode_cli(tmp_path, "reachability-scan", "--json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "count": 1,
+        "symbols": [
+            {
+                "file": "src/modules/library.py",
+                "line": 4,
+                "symbol": "orphaned",
+                "decorated": False,
+                "reason": _ADVISORY_ORPHANED,
+            }
+        ],
+    }

@@ -15,11 +15,11 @@ deadcode = "deadcode_audit.cli:main"
 
 [project.optional-dependencies]
 vulture = ["vulture==2.15"]
-mutation = ["mutmut==3.4.0", "pytest>=8,<10"]
-embeddings = ["numpy>=1.26", "torch>=2.2", "transformers>=4.40,<5"]
+mutation = ["mutmut==3.7.0", "pytest>=8,<10"]
+embeddings = ["numpy>=1.26", "torch>=2.2", "transformers>=4.40"]
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "ruff>=0.9", "build", "numpy>=1.26"]
+dev = ["pytest>=8,<10", "pytest-cov>=4", "ruff>=0.9", "build", "numpy>=1.26"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deadcode_audit"]

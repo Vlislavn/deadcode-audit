@@ -42,6 +42,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 |---|---|
 | Findings and score | `deadcode scan [--json]` |
 | Enforce quality policy | `deadcode ci --json` — exit 1 on errors or score below threshold |
+| Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory |
 | Import cycles | `deadcode cycles [--advisory] --json` |
 | Function overlap | `deadcode overlaps --json` — advisory |
@@ -61,8 +62,8 @@ uv build
 ```
 
 - **Embeddings** (`overlaps`): the first run downloads CodeBERT; inference is local CPU, no paid API. `--no-embed` uses the deterministic path only. Model or dependency failures stop the command. Cosine similarity is a heuristic for inspection, not permission to delete code. Memory grows with eligible function count — supervise large runs.
-- **Mutation** (`mutmut`): POSIX only — use Linux/WSL. Runs execute repository tests in a disposable `mutants/` directory.
+- **Mutation** (`mutmut` 3.7.0): POSIX only — use macOS/Linux/WSL. The native owner copies broad roots but mutates only the selected files. Failed baselines stop the run; repeated test passes, subprocess associations and process identity remain isolated. Repository-read assets belong in `project.mutation_also_copy`. Runs use a disposable `mutants/` directory.
 - Install extras together: a subsequent exact sync with fewer extras removes previously installed ones. The Vulture integration test requires its extra.
 
 Upstream notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-License: [MIT](LICENSE).
+License: [MIT](LICENSE). Changes: [CHANGELOG.md](CHANGELOG.md).

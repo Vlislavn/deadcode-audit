@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from deadcode_audit import _mask, config, framework, history, output
+from fixtures.deadcode_cli import run_deadcode_cli
 from deadcode_audit.diagnostic import ENGINE_AI_SLOP, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
 from deadcode_audit.scoring import calculate_score
 
@@ -176,3 +177,48 @@ def test_masked_source_is_lazy_and_cached() -> None:
     ctx = framework.build_file_context(Path("src/a.py"), 's = "secret"\n')
     assert "secret" not in ctx.masked_source
     assert ctx.masked_source is ctx.masked_source  # cached
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            '"""except Exception: pass; eval(value); importlib.import_module(name)"""\n',
+            0,
+        ),
+        (
+            'def recover():\n    try:\n        work()\n    except Exception:\n        return "unavailable"\n',
+            0,
+        ),
+        ("try:\n    work()\nexcept Exception:\n    pass\n", 1),
+        ("eval(value)\n", 1),
+        ("importlib.import_module(name)\n", 1),
+        (
+            "importlib.import_module(name)  # ai-slop: ignore[security/dynamic-import] - trusted plugin registry\n",
+            0,
+        ),
+        (
+            "eval(value)  # ai-slop: ignore[security/dynamic-import] - unrelated rule\n",
+            1,
+        ),
+        ("def (:\n", 1),
+    ],
+)
+def test_security_command_gates_actual_ast_errors_with_specific_annotations(tmp_path, source, expected):
+    path = tmp_path / "boundary.py"
+    path.write_text(source, encoding="utf-8")
+    # Security never consumes general deadcode config severity overrides.
+    (tmp_path / ".deadcode.yml").write_text("rules:\n  security/eval: off\n", encoding="utf-8")
+    result = run_deadcode_cli(tmp_path, "security", str(path))
+    assert result.returncode == expected, result.stdout + result.stderr
+
+
+def test_security_command_rejects_missing_targets(tmp_path):
+    result = run_deadcode_cli(tmp_path, "security", str(tmp_path / "missing.py"))
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_security_command_rejects_empty_directory(tmp_path: Path) -> None:
+    result = run_deadcode_cli(tmp_path, "security", str(tmp_path))
+    assert result.returncode == 1
+    assert result.stderr == "Security scan found no Python files\n"

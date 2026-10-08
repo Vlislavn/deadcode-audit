@@ -182,12 +182,6 @@ def _looks_like_id(value: str) -> bool:
     return False
 
 
-def detect(ctx: FileContext) -> list[Diagnostic]:
-    """Flag string literals wired into runtime behaviour that are shaped like URLs or provider ids."""
-    if ctx.is_test_file:
-        return []  # test fixtures legitimately inline endpoints and ids (shared test-file definition)
-
-
 def _docstring_nodes(tree: ast.Module) -> set[int]:
     """Object ids of every module/class/function docstring Constant (excluded from scanning).
 

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
     from typing import Any
 
+    from mutmut.configuration import Config
+
 
 @dataclass(frozen=True)
 class MutationGateStat:
@@ -220,6 +222,23 @@ def build_mutation_test_roots(paths: list[Path]) -> list[str]:
     return sorted(set(matched)) or [p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")])]
 
 
+def _configure_mutation_for_paths(paths: list[Path]) -> Config:
+    """Configure native mutmut to copy broad roots and mutate exact changed files."""
+    from mutmut.configuration import Config
+
+    config_obj = Config.get()
+    config_obj.source_paths = build_mutation_copy_roots(paths)
+    config_obj.resolved_mutated_source_paths = [
+        diffscope.REPO_ROOT / "mutants" / root for root in config_obj.source_paths
+    ]
+    config_obj.only_mutate = [path.as_posix() for path in paths]
+    config_obj.also_copy = build_also_copy(list(config_obj.also_copy), config_obj.source_paths)
+    config_obj.pytest_add_cli_args_test_selection = build_mutation_test_roots(paths)
+    config_obj.mutate_only_covered_lines = True
+    config_obj.use_setproctitle = False
+    return config_obj
+
+
 def _reset_mutants_dir() -> None:
     """Remove persisted mutmut state so each gate run reflects current results."""
     mutants_dir = diffscope.REPO_ROOT / "mutants"
@@ -289,165 +308,71 @@ def _patch_macos_proxy_lookup() -> None:
     ending in ``getproxies_macosx_sysconf``). Unit tests must not depend on
     host proxy config, so the gate pins the lookup to "no proxies".
     """
-    if sys.platform != "darwin":
-        return
     import urllib.request
 
-    urllib.request.getproxies_macosx_sysconf = lambda: {}  # type: ignore[assignment,attr-defined]
-
-
-def _patch_setproctitle_noop() -> None:
-    """No-op mutmut's per-child ``setproctitle`` call (macOS fork-safety).
-
-    mutmut sets a cosmetic process title inside every forked mutant child
-    (``setproctitle(f'mutmut: {mutant_name}')``). The darwin implementation
-    routes through CoreFoundation (``CFBundleGetFunctionPointerForName``),
-    which is not fork-safe once the parent has initialized CF — guaranteed
-    here by the in-process test passes. Every child then dies with SIGSEGV
-    before running a single test (observed: 9427/9427 mutants "segfault",
-    crash reports faulting in ``darwin_set_process_title``). The title is
-    purely cosmetic, so drop it for the gate run.
-    """
-    import mutmut.__main__ as mm
-
-    def _noop_setproctitle(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    mm.setproctitle = _noop_setproctitle
+    # Detect the native capability rather than a statically narrowed platform:
+    # the same gate module is type-checked on Linux and executed on macOS.
+    if hasattr(urllib.request, "getproxies_macosx_sysconf"):
+        urllib.request.getproxies_macosx_sysconf = lambda: {}  # type: ignore[assignment,attr-defined]
 
 
 def _patch_pass_isolation() -> None:
-    """Purge cached test modules before every in-process pytest pass (see above)."""
+    """Purge cached tests and reject a failed coverage baseline before mutation."""
     import mutmut.__main__ as mm
 
     _orig_execute_pytest = mm.PytestRunner.execute_pytest
 
     def execute_pytest(self: Any, params: list[str], **kwargs: Any) -> int:
         purge_cached_test_modules()
-        return int(_orig_execute_pytest(self, params, **kwargs))
+        capture = getattr(sys.stdout, "catcher", None)
+        result = int(_orig_execute_pytest(self, params, **kwargs))
+        if result != 0 and os.environ.get("MUTANT_UNDER_TEST") == "mutant_generation":
+            if capture is not None:
+                capture.dump_output()
+            raise SystemExit(result)
+        return result
 
     mm.PytestRunner.execute_pytest = execute_pytest
 
 
-def _patch_stats_no_truncate() -> None:
-    """Stop mutmut's stats pass from truncating test↔mutant associations.
-
-    mutmut builds the per-function test association by running the suite once with
-    ``-x`` (plus the repo's inherited ``--maxfail=1``). A single test that errors
-    *only* in the copied ``mutants/`` tree (different CWD / trampolined imports)
-    halts that pass — so every test after it is never associated with the functions
-    it covers, and those mutants then SURVIVE as false positives regardless of how
-    thoroughly they are actually tested. Run the stats pass without early-exit and
-    tolerate a non-zero result so associations are built from every passing test.
-    Collection errors in one file are isolated (``--continue-on-collection-errors``)
-    instead of aborting the whole pass.
-    """
-    import mutmut
-    import mutmut.__main__ as mm
-
-    def run_stats(self: Any, *, tests: Any) -> int:
-        class StatsCollector:
-            def pytest_runtest_logstart(self, nodeid: Any, location: Any) -> None:
-                mutmut.duration_by_test[nodeid] = 0
-
-            def pytest_runtest_teardown(self, item: Any, nextitem: Any) -> None:
-                for function in mutmut._stats:
-                    mutmut.tests_by_mangled_function_name[function].add(
-                        mm.strip_prefix(item._nodeid, prefix="mutants/")
-                    )
-                mutmut._stats.clear()
-
-            def pytest_runtest_makereport(self, item: Any, call: Any) -> None:
-                mutmut.duration_by_test[item.nodeid] = mutmut.duration_by_test.get(item.nodeid, 0) + call.duration
-
-        pytest_args = ["-q", "--maxfail=100000", "--continue-on-collection-errors"]
-        if tests:
-            pytest_args += list(tests)
-        else:
-            pytest_args += self._pytest_add_cli_args_test_selection
-        with mm.change_cwd("mutants"):
-            return int(self.execute_pytest(pytest_args, plugins=[StatsCollector()]))
-
-    mm.PytestRunner.run_stats = run_stats
-
-    # Diagnostic: when DEADCODE_MUTMUT_FRAGILE_LOG is set, run the *clean* test pass
-    # (mutant_name is None) without ``-x`` so a single gate run records EVERY test
-    # that errors only in the copied ``mutants/`` tree, instead of aborting at the
-    # first one. Per-mutant runs (mutant_name set) are untouched — they must keep
-    # ``-x`` so a mutant is killed the instant one associated test fails.
-    _fragile_log = os.environ.get("DEADCODE_MUTMUT_FRAGILE_LOG")
-    if _fragile_log:
-        _orig_run_tests = mm.PytestRunner.run_tests
-
-        def run_tests(self: Any, *, mutant_name: Any, tests: Any) -> int:
-            if mutant_name is not None:
-                return _orig_run_tests(self, mutant_name=mutant_name, tests=tests)
-            fails: list[str] = []
-
-            class FailRec:
-                def pytest_runtest_logreport(self, report: Any) -> None:
-                    if report.failed:
-                        fails.append(f"{report.nodeid} [{report.when}]")
-
-                def pytest_collectreport(self, report: Any) -> None:
-                    if report.failed:
-                        fails.append(f"COLLECT {report.nodeid}")
-
-            pytest_args = [
-                "-q",
-                "--maxfail=100000",
-                "--continue-on-collection-errors",
-                "-p",
-                "no:randomly",
-                "-p",
-                "no:random-order",
-            ]
-            if tests:
-                pytest_args += list(tests)
-            else:
-                pytest_args += self._pytest_add_cli_args_test_selection
-            with mm.change_cwd("mutants"):
-                result = int(self.execute_pytest(pytest_args, plugins=[FailRec()]))
-            Path(_fragile_log).write_text("\n".join(fails), encoding="utf-8")
-            return result
-
-        mm.PytestRunner.run_tests = run_tests
+def _purge_original_source_modules() -> None:
+    """Make test imports use copied sources, including the gate's own targets."""
+    roots = [
+        *(diffscope.REPO_ROOT / root for root in diffscope.source_roots()),
+        *(
+            diffscope.REPO_ROOT / root
+            for root in diffscope.project_paths("import_roots", [])
+            if root != Path(".")
+        ),
+        Path(__file__).resolve().parent,
+    ]
+    for name, module in list(sys.modules.items()):
+        # Native entry aliases are process infrastructure, not importable test targets.
+        # inspect/coverage and multiprocessing require their identity to survive.
+        if name in {"__main__", "__mp_main__"}:
+            continue
+        source = getattr(module, "__file__", None)
+        if source and any(
+            Path(source).resolve().is_relative_to(root.resolve()) for root in roots
+        ):
+            del sys.modules[name]
 
 
-def run_mutmut_for_paths(paths: list[Path]) -> int:
-    """Execute mutmut for the provided paths using the repo's shared config.
-
-    Temporarily moves the process to ``REPO_ROOT`` (mutmut resolves ``mutants/`` and test roots
-    relative to the CWD) and restores the original CWD in the ``finally`` below, so the chdir is
-    scoped to this gate run rather than a permanent global side effect.
-    """
+def _run_mutmut_for_paths(paths: list[Path]) -> int:
+    """Execute mutmut for the provided paths using the repo's shared config."""
     if not paths:
         print("No mutation targets changed vs compare branch")
         return 0
 
-    if not hasattr(os, "fork"):
-        raise RuntimeError("Mutation requires POSIX fork; use Linux/macOS or WSL")
-    original_cwd = Path.cwd()
     os.chdir(diffscope.REPO_ROOT)
     _reset_mutants_dir()
 
     _preimport_native_libs()
 
-    import mutmut
+    _configure_mutation_for_paths(paths)
     import mutmut.__main__ as mutmut_main
 
-    config_obj = mutmut_main.load_config()
-    config_obj.paths_to_mutate = build_mutation_copy_roots(paths)
-    config_obj.do_not_mutate = build_do_not_mutate_patterns(config_obj.paths_to_mutate, paths)
-    config_obj.also_copy = build_also_copy(list(config_obj.also_copy), config_obj.paths_to_mutate)
-    config_obj.tests_dir = build_mutation_test_roots(paths)
-    config_obj.mutate_only_covered_lines = True
-    # ``mutmut.__main__`` binds the same ``mutmut`` module object, so one assignment configures
-    # both namespaces (the previous double assignment set the same attribute twice).
-    mutmut.config = config_obj
-    _patch_stats_no_truncate()
     _patch_pass_isolation()
-    _patch_setproctitle_noop()
     _patch_macos_proxy_lookup()
     real_fork = os.fork
     real_wait = os.wait
@@ -462,11 +387,11 @@ def run_mutmut_for_paths(paths: list[Path]) -> int:
     os.fork = tracking_fork  # type: ignore[assignment]
     os.wait = lambda: reap_next_mutant_child(real_wait, mutant_children)  # type: ignore[assignment]
     try:
+        _purge_original_source_modules()
         mutmut_main._run([], None)
     finally:
         os.fork = real_fork  # type: ignore[assignment]
         os.wait = real_wait  # type: ignore[assignment]
-        os.chdir(original_cwd)
     stat = _load_mutation_gate_stat()
     print(
         f"Mutation kill rate: {kill_rate(stat):.1%} "
@@ -476,3 +401,14 @@ def run_mutmut_for_paths(paths: list[Path]) -> int:
     if exit_code != 0:
         _print_mutation_gate_failure(stat)
     return exit_code
+
+
+def run_mutmut_for_paths(paths: list[Path]) -> int:
+    """Run the native driver while restoring the caller's working directory."""
+    if not hasattr(os, "fork"):
+        raise RuntimeError("Mutation requires POSIX fork; use Linux/macOS or WSL")
+    original_cwd = Path.cwd()
+    try:
+        return _run_mutmut_for_paths(paths)
+    finally:
+        os.chdir(original_cwd)
