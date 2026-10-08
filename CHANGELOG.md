@@ -1,0 +1,12 @@
+# Changelog
+
+## [Unreleased]
+
+### Changed
+- Isolate every native pytest pass/fork in a private cleaned scratch tree. Bound mutation tests with configurable pytest-timeout safety (default 5s, max 60s); keep harness-health counters strict and preserve explicit native budgets.
+- Skip comment-only mutation work only after strict merge-base AST equivalence; retain added files, defaults, decorators, annotations and all real code changes, with an explicit no-op receipt.
+- Preserve IVAI's security command and dynamic-import authorization checks alongside standalone assertion and fail-fast rules.
+- Use native mutmut 3.7 configuration while retaining failed-baseline rejection, test-pass isolation, source/process identity, macOS proxy safety and tracked-child reaping.
+- Port updated CLI/native-owner regression contracts; keep repository mutation assets and roots configurable. Repository import roots no longer evict virtual-environment dependencies.
+- Permit Transformers 5.x so consuming repositories can retain their patched dependency constraints.
+- Remove an overwritten partial detector definition that broke the package's native lint gate; add a duplicate-definition regression contract.

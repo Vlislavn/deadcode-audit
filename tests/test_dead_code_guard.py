@@ -16,6 +16,7 @@ from deadcode_audit import cli, diffscope, mutation, reachability, vulture_gate
 from deadcode_audit.clones import CloneFinding  # noqa: F401  (kept importable for downstream tests)
 from deadcode_audit.mutation import (
     MutationGateStat,
+    _configure_mutation_for_paths,
     build_also_copy,
     build_mutation_copy_roots,
     build_mutation_targets,
@@ -202,19 +203,61 @@ def test_reap_next_mutant_child_propagates_no_children_left() -> None:
         reap_next_mutant_child(_no_children, set())
 
 
-def test_patch_setproctitle_noop_replaces_cf_touching_title_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    """mutmut sets a process title inside every forked mutant child; on macOS that
-    routes through CoreFoundation, which is fork-unsafe after the in-process test
-    passes → all 9427 children SIGSEGV'd. The gate must no-op the title call."""
-    mm = pytest.importorskip("mutmut.__main__")
+@pytest.mark.parametrize(
+    ("targets", "test_roots"),
+    [
+        ([Path("src/modules/evals/paths.py")], ["tests/unit/evals"]),
+        ([_SELF_TARGET], ["tests/scripts"]),
+        (
+            [Path("src/modules/core/config.py"), _SELF_TARGET],
+            ["tests/unit", "tests/scripts"],
+        ),
+    ],
+)
+def test_native_mutation_config_selects_exact_files_and_existing_test_roots(
+    targets: list[Path], test_roots: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native selection preserves copied dependencies without mutating unrelated files."""
+    from mutmut.configuration import Config
 
-    def _boom(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("real setproctitle must not be reachable during the gate run")
+    for target in targets:
+        file = diffscope.REPO_ROOT / target
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("def answer():\n    return 42\n", encoding="utf-8")
+    for test_root in test_roots:
+        (diffscope.REPO_ROOT / test_root).mkdir(parents=True, exist_ok=True)
+    (diffscope.REPO_ROOT / "pyproject.toml").write_text(
+        '[tool.mutmut]\nsource_paths = ["src", "scripts"]\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(diffscope.REPO_ROOT)
+    native_config = Config.get()
+    original = vars(native_config).copy()
+    try:
+        configured = _configure_mutation_for_paths(targets)
+        from mutmut.__main__ import walk_mutatable_files
 
-    monkeypatch.setattr(mm, "setproctitle", _boom)
-    mutation._patch_setproctitle_noop()
-
-    assert mm.setproctitle("mutmut: some-mutant") is None  # boom not called → patched
+        assert configured is native_config
+        assert configured.source_paths == build_mutation_copy_roots(targets)
+        assert configured.resolved_mutated_source_paths == [
+            diffscope.REPO_ROOT / "mutants" / root for root in configured.source_paths
+        ]
+        assert configured.only_mutate == [path.as_posix() for path in targets]
+        assert configured.pytest_add_cli_args_test_selection == test_roots
+        assert configured.mutate_only_covered_lines
+        assert not configured.use_setproctitle
+        assert all(configured.should_mutate(target) for target in targets)
+        assert not configured.should_mutate(Path("src/modules/core/logging_config.py"))
+        assert not configured.should_mutate(Path("scripts/deadcode/output.py"))
+        assert sorted(walk_mutatable_files()) == sorted(targets)
+        for field in (
+            "timeout_multiplier",
+            "timeout_constant",
+            "type_check_command",
+            "do_not_mutate",
+        ):
+            assert getattr(configured, field) == original[field]
+    finally:
+        vars(native_config).update(original)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS system-proxy lookup only exists on darwin")
@@ -671,3 +714,18 @@ def test_main_dispatches_vulture_changed(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert cli.main(["vulture-changed", "--compare-branch", "feature"]) == 0
     assert captured["branch"] == "feature"
+
+
+@pytest.mark.parametrize("null_terminated,delimiter", [(False, "\n"), (True, "\0")])
+def test_print_paths_preserves_delimiters(null_terminated, delimiter, capsys) -> None:
+    paths = [Path("src/note with spaces.py"), Path("scripts/deadcode/cli.py")]
+
+    assert cli._print_paths(paths, null_terminated=null_terminated) == 0
+    assert capsys.readouterr().out == delimiter.join(path.as_posix() for path in paths) + delimiter
+
+
+@pytest.mark.parametrize("command", ["changed-python-files", "mypy-targets", "mutation-targets"])
+def test_path_commands_default_to_newlines_and_allow_null(command) -> None:
+    parser = cli._build_parser()
+    assert parser.parse_args([command]).null is False
+    assert parser.parse_args([command, "--null"]).null is True

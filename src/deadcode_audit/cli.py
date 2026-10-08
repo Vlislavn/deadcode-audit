@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _print_paths(paths: list[Path], *, null_terminated: bool = False) -> int:
+def _print_paths(paths: list[Path], *, null_terminated: bool) -> int:
     """Print relative paths using newline or NUL delimiters."""
     if null_terminated:
         for path in paths:
@@ -54,15 +54,20 @@ def _cmd_mypy_targets(args: argparse.Namespace) -> int:
 
 def _cmd_mutation_targets(args: argparse.Namespace) -> int:
     return _print_paths(
-        mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch)),
+        mutation.build_mutation_targets(
+            diffscope.changed_python_files(args.compare_branch), compare_branch=args.compare_branch
+        ),
         null_terminated=args.null,
     )
 
 
 def _cmd_run_mutmut_changed(args: argparse.Namespace) -> int:
-    return mutation.run_mutmut_for_paths(
-        mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch))
-    )
+    changed = mutation.build_mutation_targets(diffscope.changed_python_files(args.compare_branch))
+    targets = mutation.build_mutation_targets(changed, compare_branch=args.compare_branch)
+    if changed and not targets:
+        print("No mutation targets: all changed runtime files are strictly AST-equivalent to compare branch")
+        return 0
+    return mutation.run_mutmut_for_paths(targets)
 
 
 def _cmd_runtime_consumer_check(args: argparse.Namespace) -> int:
@@ -163,6 +168,23 @@ def _cmd_rules(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_security(args: argparse.Namespace) -> int:
+    """Gate security and swallowed errors without configurable rule disabling."""
+    from deadcode_audit.detectors import exceptions, security
+
+    paths = args.paths
+    if any(not (diffscope.REPO_ROOT / path).exists() for path in paths):
+        print("Security scan target does not exist", file=sys.stderr)
+        return 1
+    files = scan_mod.resolve_target_files(paths, changed=False, compare_branch="main", exclude=())
+    if not files:
+        print("Security scan found no Python files", file=sys.stderr)
+        return 1
+    result = scan_mod.run_scan(files, (exceptions, security), config.DeadcodeConfig())
+    print(output.render_terminal(result.diagnostics, result.score))
+    return int(any(item.severity is Severity.ERROR for item in result.diagnostics))
+
+
 def _cmd_trend(args: argparse.Namespace) -> int:
     print(history.render_trend(history.read_records(), limit=args.limit))
     return 0
@@ -206,6 +228,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "scan": _cmd_scan,
     "ci": _cmd_ci,
     "rules": _cmd_rules,
+    "security": _cmd_security,
     "trend": _cmd_trend,
     "overlaps": _cmd_overlaps,
     "reachability-scan": _cmd_reachability_scan,
@@ -285,6 +308,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("rules", help="List detector rules")
+    security_parser = subparsers.add_parser("security", help="Gate security and swallowed-error AST rules")
+    security_parser.add_argument("paths", nargs="*", help="Files/dirs to scan (default: configured roots)")
 
     trend_parser = subparsers.add_parser("trend", help="Show score history")
     trend_parser.add_argument("--limit", type=int, default=20, help="Max records to show (0 = all)")

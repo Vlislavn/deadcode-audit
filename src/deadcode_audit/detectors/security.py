@@ -28,6 +28,9 @@ not of the surrounding code, so there is no per-condition doubt to resolve:
   ignore directive with a reason is the escape hatch for authorized uses. Test files are exempt
   (the one legitimate assert habitat).
 
+* ``security/dynamic-import`` — dynamic module loading requires a reviewed call-site
+  annotation describing the trusted module-selection boundary.
+
 This module is itself the most likely false positive: every trigger token (the credential-name
 keywords, the ``AKIA``/``sk-``/``eyJ`` shape prefixes, ``eval``, ``shell``) is assembled at runtime
 via string concatenation so neither the masked-source scans nor a future text grep can self-match
@@ -100,7 +103,15 @@ ASSERT_SPEC = RuleSpec(
     ),
 )
 
-rules: tuple[RuleSpec, ...] = (SECRET_SPEC, EVAL_SPEC, SHELL_SPEC, ASSERT_SPEC)
+DYNAMIC_IMPORT_SPEC = RuleSpec(
+    rule="security/dynamic-import",
+    engine=ENGINE_SECURITY,
+    default_severity=Severity.ERROR,
+    category="Dynamic imports",
+    help="Prefer static imports; authorize a necessary loader at its call site with a trusted-module boundary.",
+)
+
+rules: tuple[RuleSpec, ...] = (SECRET_SPEC, EVAL_SPEC, SHELL_SPEC, ASSERT_SPEC, DYNAMIC_IMPORT_SPEC)
 
 
 # --- Secret-name + shape recognisers (tokens built by concatenation to avoid self-match) ------
@@ -436,7 +447,7 @@ def _detect_assert(node: ast.AST, path_posix: str) -> Diagnostic | None:
 
 
 def detect(ctx: FileContext) -> list[Diagnostic]:
-    """Run the four security rules over one parsed file context."""
+    """Run security rules over one parsed file context."""
     path_posix = ctx.path.as_posix()
     is_test_file = ctx.is_test_file  # shared config-aware verdict (test_roots/test_ prefix/tests dir)
     findings: list[Diagnostic] = []
@@ -454,4 +465,16 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
         shell_finding = _detect_shell(node, path_posix)
         if shell_finding is not None:
             findings.append(shell_finding)
+        if isinstance(node, ast.Call) and _call_attr(node) in {
+            ("importlib", "import_module"),
+            (None, "__import__"),
+        }:
+            findings.append(
+                diagnostic_from_spec(
+                    DYNAMIC_IMPORT_SPEC,
+                    file_path=path_posix,
+                    line=node.lineno,
+                    message="Dynamic module loading requires a reviewed trust boundary",
+                )
+            )
     return findings

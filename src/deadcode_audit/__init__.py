@@ -33,7 +33,6 @@ from deadcode_audit.diffscope import (
 )
 from deadcode_audit.mutation import (
     MutationGateStat,
-    build_do_not_mutate_patterns,
     build_mutation_copy_roots,
     build_mutation_targets,
     build_mutation_test_roots,
@@ -67,7 +66,6 @@ __all__ = [
     "RedundancyFinding",
     "VultureFinding",
     "added_lines_by_file",
-    "build_do_not_mutate_patterns",
     "build_mutation_copy_roots",
     "build_mutation_targets",
     "build_mutation_test_roots",

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from deadcode_audit import config, cycles
-from deadcode_audit.cli import main
+from fixtures.deadcode_cli import run_deadcode_cli
 
 # --- Tarjan SCC / find_cycles ---
 
@@ -108,10 +108,17 @@ def test_run_new_cycle_still_blocks_despite_allowlist(
 # --- CLI smoke over the real src/ tree ---
 
 
-def test_cli_cycles_advisory_json_exits_zero(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert main(["cycles", "--advisory", "--json"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["advisory"] is True
-    assert "cycles" in payload and isinstance(payload["cycles"], list)
+def test_cli_cycles_advisory_json_exits_zero(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "modules"
+    source.mkdir(parents=True)
+    (source / "left.py").write_text("from modules import right\n", encoding="utf-8")
+    (source / "right.py").write_text("from modules import left\n", encoding="utf-8")
+    result = run_deadcode_cli(tmp_path, "cycles", "--advisory", "--json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "advisory": True,
+        "count": 1,
+        "cycles": [
+            {"key": "modules.left <-> modules.right", "members": ["modules.left", "modules.right"], "allowed": False}
+        ],
+    }

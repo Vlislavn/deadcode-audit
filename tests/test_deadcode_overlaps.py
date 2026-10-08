@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from deadcode_audit import clones, overlap_embed, overlaps
-from deadcode_audit.cli import main
+from fixtures.deadcode_cli import run_deadcode_cli
 
 
 def _func(
@@ -149,8 +149,27 @@ def test_requested_embedding_failure_is_not_silently_downgraded(monkeypatch: pyt
         overlap_embed.get_embedder("requested-model")
 
 
-def test_cli_overlaps_no_embed_json_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["overlaps", "--no-embed", "--json", "--top", "3"]) == 0
-    payload = json.loads(capsys.readouterr().out)
+def test_cli_overlaps_no_embed_json_exits_zero(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "numbers.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join(f"def {name}(values):\n    return sum(values)\n" for name in ("alpha", "beta", "gamma", "delta")),
+        encoding="utf-8",
+    )
+    result = run_deadcode_cli(tmp_path, "overlaps", "--no-embed", "--json", "--min-tokens", "1", "--top", "3")
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
     assert payload["embed_active"] is False
-    assert "pairs" in payload and isinstance(payload["pairs"], list)
+    assert payload["model"] is None
+    assert payload["count"] == 3
+    assert [(pair["a"]["symbol"], pair["b"]["symbol"]) for pair in payload["pairs"]] == [
+        ("alpha", "beta"),
+        ("alpha", "gamma"),
+        ("alpha", "delta"),
+    ]
+    assert all(
+        pair["a"]["file"] == pair["b"]["file"] == "src/numbers.py"
+        and pair["combined"] == pair["struct"] == pair["api"] == 1.0
+        and pair["embed"] is None
+        for pair in payload["pairs"]
+    )
