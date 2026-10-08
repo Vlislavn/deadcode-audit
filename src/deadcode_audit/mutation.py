@@ -8,10 +8,12 @@ mutation-tests itself: any changed file under ``scripts/deadcode/`` is a self-ta
 from __future__ import annotations
 
 import ast
+import math
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,6 +43,18 @@ class MutationGateStat:
 
 
 DEFAULT_MIN_KILL_RATE = 0.70
+DEFAULT_TEST_TIMEOUT_SECONDS = 5.0
+MAX_TEST_TIMEOUT_SECONDS = 60.0
+TEST_TIMEOUT_ENV = "DEADCODE_MUTMUT_TEST_TIMEOUT_SECONDS"
+
+
+def mutation_test_timeout_seconds() -> float:
+    """Return the bounded per-test safety budget for native mutation passes."""
+    raw = os.environ.get(TEST_TIMEOUT_ENV, str(DEFAULT_TEST_TIMEOUT_SECONDS))
+    value = float(raw)
+    if not math.isfinite(value) or not 0 < value <= MAX_TEST_TIMEOUT_SECONDS:
+        raise ValueError(f"{TEST_TIMEOUT_ENV} must be finite and within (0, {MAX_TEST_TIMEOUT_SECONDS}], got {raw!r}")
+    return value
 
 
 def min_kill_rate() -> float:
@@ -256,6 +270,13 @@ def _configure_mutation_for_paths(paths: list[Path]) -> Config:
     config_obj.pytest_add_cli_args_test_selection = build_mutation_test_roots(paths)
     config_obj.mutate_only_covered_lines = True
     config_obj.use_setproctitle = False
+    budget = mutation_test_timeout_seconds()
+    explicit_budget = any(
+        arg == "--timeout" or arg.startswith("--timeout=") for arg in config_obj.pytest_add_cli_args
+    )
+    if TEST_TIMEOUT_ENV in os.environ or not explicit_budget:
+        config_obj.pytest_add_cli_args = [*config_obj.pytest_add_cli_args, f"--timeout={budget}"]
+    config_obj.pytest_add_cli_args = [*config_obj.pytest_add_cli_args, "--timeout-method=signal"]
     return config_obj
 
 
@@ -337,7 +358,7 @@ def _patch_macos_proxy_lookup() -> None:
 
 
 def _patch_pass_isolation() -> None:
-    """Purge cached tests and reject a failed coverage baseline before mutation."""
+    """Give parent passes and fork children private temps and a test safety budget."""
     import mutmut.__main__ as mm
 
     _orig_execute_pytest = mm.PytestRunner.execute_pytest
@@ -345,7 +366,14 @@ def _patch_pass_isolation() -> None:
     def execute_pytest(self: Any, params: list[str], **kwargs: Any) -> int:
         purge_cached_test_modules()
         capture = getattr(sys.stdout, "catcher", None)
-        result = int(_orig_execute_pytest(self, params, **kwargs))
+        mutation_test_timeout_seconds()
+        with tempfile.TemporaryDirectory(prefix=f"deadcode-mutmut-{os.getpid()}-") as base:
+            original_args = self._pytest_add_cli_args
+            self._pytest_add_cli_args = [*original_args, f"--basetemp={base}/pytest"]
+            try:
+                result = int(_orig_execute_pytest(self, params, **kwargs))
+            finally:
+                self._pytest_add_cli_args = original_args
         if result != 0 and os.environ.get("MUTANT_UNDER_TEST") == "mutant_generation":
             if capture is not None:
                 capture.dump_output()

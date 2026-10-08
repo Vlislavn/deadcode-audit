@@ -62,7 +62,7 @@ uv build
 ```
 
 - **Embeddings** (`overlaps`): the first run downloads CodeBERT; inference is local CPU, no paid API. `--no-embed` uses the deterministic path only. Model or dependency failures stop the command. Cosine similarity is a heuristic for inspection, not permission to delete code. Memory grows with eligible function count — supervise large runs.
-- **Mutation** (`mutmut` 3.7.0): POSIX only — use macOS/Linux/WSL. The native owner copies broad roots but mutates only the selected files. Failed baselines stop the run; repeated test passes, subprocess associations and process identity remain isolated. Repository-read assets belong in `project.mutation_also_copy`. Runs use a disposable `mutants/` directory.
+- **Mutation** (`mutmut` 3.7.0): POSIX only — use macOS/Linux/WSL. The native owner copies broad roots but mutates only the selected files. Failed baselines stop the run; repeated test passes, subprocess associations and process identity remain isolated. Repository-read assets belong in `project.mutation_also_copy`. Runs use a disposable `mutants/` directory, plus a private cleaned scratch tree for every pytest pass/fork. The mutation-only per-test safety default is 5s; `DEADCODE_MUTMUT_TEST_TIMEOUT_SECONDS` can override it within `(0, 60]`. Explicit `[tool.mutmut].pytest_add_cli_args` timeout settings are preserved unless the environment overrides them; broad global suite addopts are not the mutation budget.
 - Install extras together: a subsequent exact sync with fewer extras removes previously installed ones. The Vulture integration test requires its extra.
 
 Upstream notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
