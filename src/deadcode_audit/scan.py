@@ -86,6 +86,8 @@ def run_scan(
     files: list[Path],
     detectors: Sequence[Detector],
     cfg: config.DeadcodeConfig,
+    *,
+    dead_symbols: bool = True,
 ) -> ScanResult:
     """Run all detectors over ``files``, apply config severities, and compute the score.
 
@@ -94,7 +96,9 @@ def run_scan(
     never via a stale hardcoded list.
     """
     sources = [(path, diffscope.read_text(path)) for path in files]
-    diagnostics = run_detectors(sources, detectors) + reachability_scan.dead_symbol_diagnostics(files)
+    diagnostics = run_detectors(sources, detectors)
+    if dead_symbols:
+        diagnostics += reachability_scan.dead_symbol_diagnostics(files)
     diagnostics = config.apply_rule_severities(diagnostics, cfg.rule_severity)
     style_rules = frozenset(spec.rule for detector in detectors for spec in detector.rules if spec.style)
     score = calculate_score(

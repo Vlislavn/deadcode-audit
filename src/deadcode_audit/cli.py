@@ -181,7 +181,7 @@ def _cmd_security(args: argparse.Namespace) -> int:
     if not files:
         print("Security scan found no Python files", file=sys.stderr)
         return 1
-    result = scan_mod.run_scan(files, (exceptions, security), config.DeadcodeConfig())
+    result = scan_mod.run_scan(files, (exceptions, security), config.DeadcodeConfig(), dead_symbols=False)
     print(output.render_terminal(result.diagnostics, result.score))
     return int(any(item.severity is Severity.ERROR for item in result.diagnostics))
 

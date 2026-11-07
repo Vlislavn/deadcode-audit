@@ -152,7 +152,7 @@ def dead_symbol_diagnostics(files: list[Path]) -> list[Diagnostic]:
             message=f"{definition.symbol}: {reason}",
         )
         for definition, reason in rows
-        if definition.file_path in scanned and _ADVISORY_RANK.get(reason, 99) <= _ACTIONABLE_MAX_RANK
+        if definition.file_path in scanned and ADVISORY_RANK.get(reason, 99) <= _ACTIONABLE_MAX_RANK
     ]
 
 
