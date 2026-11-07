@@ -666,10 +666,10 @@ def test_vulture_changed_check_ignores_findings_off_changed_lines(
     assert "[block]" not in capsys.readouterr().out
 
 
-def test_public_symbol_definitions_flags_decorated_and_skips_private(
+def test_public_symbol_definitions_flags_decorated_and_includes_private(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Decorated public symbols are INCLUDED (decorated=True, not skipped); private names excluded.
+    """Decorated symbols are INCLUDED (decorated=True, not skipped); private names included; dunders excluded.
 
     The old gate dropped all decorated symbols (silent pass for decorated-but-dead code). Now they
     are surfaced with a flag that only downgrades them to advisory, never grants a free pass.
@@ -680,13 +680,18 @@ def test_public_symbol_definitions_flags_decorated_and_skips_private(
         "@router.post('/p')\n"
         "def routed():\n    return 1\n\n"
         "def plain():\n    return 2\n\n"
-        "def _private():\n    return 3\n",
+        "def _private():\n    return 3\n\n"
+        "def __getattr__(name):\n    return name\n",
         encoding="utf-8",
     )
 
     definitions = reachability.public_symbol_definitions(Path("m.py"))
 
-    assert [(d.symbol, d.decorated) for d in definitions] == [("routed", True), ("plain", False)]
+    assert [(d.symbol, d.decorated) for d in definitions] == [
+        ("routed", True),
+        ("plain", False),
+        ("_private", False),
+    ]
 
 
 def test_precommit_vulture_ignore_names_match_config_ssot() -> None:

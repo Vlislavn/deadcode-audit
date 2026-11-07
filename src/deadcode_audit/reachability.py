@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -88,8 +89,10 @@ class PublicSymbolDefinition:
 
 
 def public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
-    """Return top-level public function and class definitions for a module.
+    """Return top-level function and class definitions (public AND private; dunders skipped) for a module.
 
+    Private ``_name`` symbols are candidates too: an unreferenced private helper is the most obviously
+    dead code there is, and the resolver already counts an intra-module use as a consumer.
     Decorated symbols are INCLUDED (with ``decorated=True``) — unlike the old skip-all — so
     decorated-but-dead symbols can still be surfaced. The decorator flag only downgrades them
     from blocking to advisory later; it never grants a silent pass.
@@ -106,8 +109,8 @@ def public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
     definitions: list[PublicSymbolDefinition] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name.startswith("_"):
-                continue
+            if node.name.startswith("__") and node.name.endswith("__"):
+                continue  # module dunders (``__getattr__``/``__dir__``) are invoked by the interpreter
             definitions.append(
                 PublicSymbolDefinition(
                     file_path=path,
@@ -358,6 +361,26 @@ def resolved_reference_exists(
     return False
 
 
+def entry_point_targets() -> set[tuple[str, str]]:
+    """``(module, symbol)`` pairs named by ``pyproject.toml`` entry points — consumed by the installer, not by src.
+
+    Reads ``[project.scripts]``, ``[project.gui-scripts]`` and every ``[project.entry-points.<group>]``
+    (``"pkg.mod:func"`` / ``"pkg.mod:Cls.method"`` -> ``("pkg.mod", "func"|"Cls")``).
+    """
+    pyproject = diffscope.REPO_ROOT / "pyproject.toml"
+    if not pyproject.is_file():
+        return set()
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8-sig")).get("project", {})
+    groups = [project.get("scripts", {}), project.get("gui-scripts", {}), *project.get("entry-points", {}).values()]
+    targets: set[tuple[str, str]] = set()
+    for group in groups:
+        for value in group.values():
+            module, _sep, attr = str(value).partition(":")
+            if attr:
+                targets.add((module.strip(), attr.split("[")[0].strip().split(".")[0]))
+    return targets
+
+
 def runtime_corpus_files() -> list[Path]:
     """Every runtime ``src`` + ``scripts`` Python file, repo-relative (the resolver corpus)."""
     return diffscope.runtime_files()
@@ -418,11 +441,14 @@ def runtime_consumer_check(paths: list[Path]) -> int:
     # Resolver refinement: does each symbol's name resolve to a real reference?
     facts = [collect_module_facts(diffscope.read_text(p), p) for p in runtime_corpus_files()]
     reexport_map = build_reexport_map(facts)
+    entry_points = entry_point_targets()
 
     blocking: list[PublicSymbolDefinition] = []
     advisory: list[tuple[PublicSymbolDefinition, str]] = []
     for definition in definitions:
         def_dotted = module_dotted_name(definition.file_path)
+        if (def_dotted, definition.symbol) in entry_points:
+            continue  # consumed by a packaging entry point
         if def_dotted is not None and resolved_reference_exists(definition.symbol, def_dotted, facts, reexport_map):
             continue  # consumed
         key = (definition.file_path, definition.line, definition.symbol)

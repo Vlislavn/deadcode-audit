@@ -3,8 +3,8 @@
 Where :func:`deadcode_audit.reachability.runtime_consumer_check` checks only the CHANGED public symbols
 and BLOCKS truly-orphaned ones, this scans EVERY public top-level symbol in ``src/`` and reports the ones
 with no resolved runtime consumer, ranked by deadness confidence. Like the ``overlaps`` subcommand it is
-on-demand and advisory: :func:`run` ALWAYS returns 0 and it is deliberately NOT part of ``make deadcode`` /
-pre-commit / CI.
+on-demand and advisory: :func:`run` ALWAYS returns 0. Its actionable classes (orphaned + test-only-reachable)
+also feed the ``scan``/``ci`` pass as the :data:`DEAD_SYMBOL_RULE` diagnostic via :func:`dead_symbol_diagnostics`.
 
 It reuses the Tier 4 resolver and the SHARED :func:`deadcode_audit.reachability.classify_unresolved`
 classifier, so every symbol lands in the SAME confidence classes the gate uses (plus the undecorated-orphan
@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 from deadcode_audit import diffscope
+from deadcode_audit.diagnostic import ENGINE_REACHABILITY, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
 from deadcode_audit.reachability import (
     ADVISORY_LABEL,
     ADVISORY_RANK,
@@ -31,6 +32,7 @@ from deadcode_audit.reachability import (
     build_reexport_map,
     classify_unresolved,
     collect_module_facts,
+    entry_point_targets,
     module_dotted_name,
     public_symbol_definitions,
     resolved_reference_exists,
@@ -47,6 +49,15 @@ _IDENT = re.compile(r"[A-Za-z_]\w*")
 # The actionable classes — orphaned + test-only-reachable — are the consolidation/removal targets. The
 # rest (unresolved suspects, framework-decorated, test-support hooks) are mostly live or expected noise.
 _ACTIONABLE_MAX_RANK = ADVISORY_RANK[ADVISORY_TEST_ONLY]
+
+DEAD_SYMBOL_RULE = RuleSpec(
+    rule="reachability/dead-symbol",
+    engine=ENGINE_REACHABILITY,
+    default_severity=Severity.ERROR,
+    category="Dead code",
+    help="Top-level function/class with no runtime consumer (unreferenced, or referenced only by tests). "
+    "Remove it or wire it into the product; downgrade via `.deadcode.yml` rules if it is intentional API.",
+)
 
 
 def build_candidates() -> list[PublicSymbolDefinition]:
@@ -88,10 +99,13 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
     corpus_text = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
     facts = [collect_module_facts(text, path) for path, text in corpus_text.items()]
     reexport_map = build_reexport_map(facts)
+    entry_points = entry_point_targets()
 
     unresolved: list[PublicSymbolDefinition] = []
     for definition in candidates:
         dotted = module_dotted_name(definition.file_path)
+        if (dotted, definition.symbol) in entry_points:
+            continue  # consumed by a packaging entry point ([project.scripts] etc.)
         if dotted is not None and resolved_reference_exists(definition.symbol, dotted, facts, reexport_map):
             continue  # consumed by a resolved reference
         unresolved.append(definition)
@@ -121,6 +135,25 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
         )
     )
     return rows
+
+
+def dead_symbol_diagnostics(files: list[Path]) -> list[Diagnostic]:
+    """Actionable whole-tree rows (orphaned + test-only-reachable) defined in ``files``, as gate diagnostics."""
+    try:
+        rows = scan()
+    except SyntaxError:
+        return []  # the per-file pass already reports deadcode/parse-error, which fails the gate
+    scanned = set(files)
+    return [
+        diagnostic_from_spec(
+            DEAD_SYMBOL_RULE,
+            file_path=definition.file_path.as_posix(),
+            line=definition.line,
+            message=f"{definition.symbol}: {reason}",
+        )
+        for definition, reason in rows
+        if definition.file_path in scanned and _ADVISORY_RANK.get(reason, 99) <= _ACTIONABLE_MAX_RANK
+    ]
 
 
 def _shown_rows(rows: list[tuple[PublicSymbolDefinition, str]], top: int) -> list[tuple[PublicSymbolDefinition, str]]:

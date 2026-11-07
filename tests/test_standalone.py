@@ -78,3 +78,34 @@ def test_clean_file_reports_actual_coverage(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["files_scanned"] == 1
     assert payload["summary"]["files"] == 0  # files with findings, retained for compatibility
+
+
+def test_ci_gates_dead_symbols_but_not_live_wiring(tmp_path):
+    """Regression: `ci` scored 100/100 with unreferenced private/public symbols and flagged the entry point."""
+    (tmp_path / '.deadcode.yml').write_text('project:\n  source_roots: [src]\n  test_roots: [tests]\n'
+                                            "  import_roots: [src, '.']\n")
+    (tmp_path / 'pyproject.toml').write_text('[project]\nname = "app"\n[project.scripts]\napp = "app.cli:main"\n')
+    package, tests = tmp_path / 'src/app', tmp_path / 'tests'
+    package.mkdir(parents=True)
+    tests.mkdir()
+    (package / '__init__.py').write_text('from app.core import helper\n\n__all__ = ["helper"]\n')
+    (package / 'core.py').write_text(
+        '__all__ = ["exported"]\nREGISTRY = {}\n\n\ndef register(fn):\n    REGISTRY[fn.__name__] = fn\n    return fn\n\n\n'
+        '@register\ndef plugin():\n    return 0\n\n\ndef helper():\n    return 1\n\n\ndef exported():\n    return 3\n\n\n'
+        'def _internal():\n    return 2\n\n\ndef used():\n    return _internal()\n'
+    )
+    (package / 'cli.py').write_text('from app.core import used\n\n\ndef main():\n    return used()\n')
+    (tests / 'test_app.py').write_text('from app.cli import main\n\n\ndef test_main():\n    assert main() == 2\n')
+
+    clean = run(tmp_path, 'ci', '--json')
+    assert clean.returncode == 0, clean.stdout + clean.stderr  # entry point, re-export, __all__, registry: live
+
+    with (package / 'core.py').open('a') as core:
+        core.write('\n\ndef _never_called():\n    return 4\n\n\ndef public_unused():\n    return 5\n\n\n'
+                   'class Unused:\n    pass\n\n\ndef only_tested():\n    return 6\n')
+    (tests / 'test_core.py').write_text('from app.core import only_tested\n\n\ndef test_it():\n    assert only_tested()\n')
+    dirty = run(tmp_path, 'ci', '--json')
+    assert dirty.returncode == 1, dirty.stdout + dirty.stderr
+    flagged = {d['message'].split(':')[0] for d in json.loads(dirty.stdout)['diagnostics']
+               if d['rule'] == 'reachability/dead-symbol'}
+    assert flagged == {'_never_called', 'public_unused', 'Unused', 'only_tested'}
