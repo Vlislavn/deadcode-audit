@@ -143,8 +143,9 @@ def _cmd_ci(args: argparse.Namespace) -> int:
 def _cmd_rules(_args: argparse.Namespace) -> int:
     from deadcode_audit.detectors import ALL_DETECTORS
     from deadcode_audit.framework import all_rule_specs
+    from deadcode_audit.reachability_scan import DEAD_SYMBOL_RULE
 
-    for spec in all_rule_specs(ALL_DETECTORS):
+    for spec in sorted([*all_rule_specs(ALL_DETECTORS), DEAD_SYMBOL_RULE], key=lambda s: s.rule):
         style = " [style]" if spec.style else ""
         print(f"{spec.rule:<34} {spec.engine:<13} {spec.default_severity.value:<8} {spec.category}{style}")
     return 0

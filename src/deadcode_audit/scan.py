@@ -2,8 +2,8 @@
 
 This is the unified surface aislop calls ``scan`` — one pass over a set of files producing a
 ``Diagnostic[]`` + a 0–100 score, rendered as terminal / JSON / SARIF / agent-prompt. Detectors
-come from :mod:`deadcode_audit.detectors`; the existing reachability/redundancy tiers stay on
-their own diff-scoped commands and are out of this AST-detector pass.
+come from :mod:`deadcode_audit.detectors`, plus the whole-tree ``reachability/dead-symbol`` rule
+(:func:`deadcode_audit.reachability_scan.dead_symbol_diagnostics`) so ``ci`` gates on unreferenced symbols.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope
+from deadcode_audit import config, diffscope, reachability_scan
 from deadcode_audit.framework import Detector, run_detectors
 from deadcode_audit.scoring import calculate_score
 
@@ -71,7 +71,7 @@ def run_scan(
 ) -> ScanResult:
     """Run all detectors over ``files``, apply config severities, and compute the score."""
     sources = [(path, diffscope.read_text(path)) for path in files]
-    diagnostics = run_detectors(sources, detectors)
+    diagnostics = run_detectors(sources, detectors) + reachability_scan.dead_symbol_diagnostics(files)
     diagnostics = config.apply_rule_severities(diagnostics, cfg.rule_severity)
     score = calculate_score(
         diagnostics,
