@@ -49,8 +49,8 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds are configured in 
 | Enforce quality policy | `deadcode ci --json` | Nonzero on errors or score below threshold |
 | Possible unused public symbols | `deadcode reachability-scan --json` | Advisory; dynamic consumers need review |
 | Import cycles | `deadcode cycles --advisory --json` | Advisory; omit `--advisory` to enforce |
-| Semantic function overlap | `deadcode overlaps --json` | Advisory; real embeddings required |
-| Deterministic overlap only | `deadcode overlaps --no-embed --json` | Explicitly disables embeddings |
+| Function overlap (two-pass) | `deadcode overlaps --json` | Advisory; pass 1 deterministic, pass 2 embedding candidates (falls back to pass 1 with a warning) |
+| Deterministic overlap only | `deadcode overlaps --no-embed --json` | Pass 1 only; never loads a model |
 | Available rules / history | `deadcode rules` / `deadcode trend` | History is local to the target |
 | Changed files / type-check targets | `deadcode changed-python-files --compare-branch main` / `deadcode mypy-targets --compare-branch main` | Paths; `--null` for machine consumers |
 | Changed-line Vulture / redundancy | `deadcode vulture-changed --compare-branch main` / `deadcode redundancy --compare-branch main` | Gates plus advisory candidates |
@@ -63,20 +63,25 @@ Parse errors, unavailable models and command failures are not a clean result.
 
 ## Embeddings
 
+`deadcode overlaps` runs two passes:
+
+1. **Pass 1, deterministic (always):** all function pairs scored by structural token similarity + API-name Jaccard (`--threshold`, default 0.55). Output keys `pairs`/`count`.
+2. **Pass 2, embedding (default):** `codesage/codesage-small-v2`, pinned to revision `4844c2f24b25e181aa43ca058cc73dd2622565c1`, embed-only (masked mean-pool, L2, cosine). Each function's top-3 cosine neighbours not already in pass 1 are listed as type-4 candidates (same behaviour, different code), ranked by cosine. Output keys `embed_pairs`/`embed_count`, with `embed` = cosine and the pass-1 sub-scores for context.
+
+`--no-embed` runs pass 1 only. If torch/transformers or the model are not available, the command prints one `warning:` line to stderr and returns pass 1 only (`embed_active: false`).
+Evidence: on 50 real helpers with hand-written type-4 rewrites, CodeSage embed-only reached recall@3 0.92 vs 0.63 for pass 1 and passed the pre-registered rule. It is one split of short pure helpers; treat candidates as leads, not proof of equivalence or permission to delete code.
+
 ```sh
 # In this checkout; installs the model runtime, not model weights.
 uv sync --extra embeddings --extra vulture
 # From the target checkout:
-/path/to/deadcode-audit/.venv/bin/deadcode overlaps --model microsoft/codebert-base --json
+/path/to/deadcode-audit/.venv/bin/deadcode overlaps --json
 ```
 
-The first run downloads CodeBERT from Hugging Face. Computation is local CPU inference,
-with two CPU threads, batches of four, and at most 512 tokens per function.
-There are no paid LLM API calls. Model/dependency failures stop the command; no silent deterministic fallback.
-The JSON records model revision, functions scanned/embedded, pooling, truncation limit and cosine scores. Scan JSON separately records `files_scanned`; `summary.files` counts files with findings.
-`--min-tokens` filters small functions; `--top 0` prints all matching pairs.
-Cosine similarity is a heuristic for inspection, not proof of semantic equivalence or permission to delete code.
-The comparison combines cosine, normalized syntax and API-name overlap; the API filter can miss semantic matches.
+The first default run downloads CodeSage (about 1 GB) from Hugging Face and executes its repository code (`trust_remote_code`, allowed only for pinned ids; a small shim keeps it working with transformers >= 4.50). Computation is local CPU inference,
+with two CPU threads, batches of four, and at most 512 tokens per function. There are no paid LLM API calls.
+`--model` selects another model (codesage-small-v2 and jina-v2-base-code use pinned remote code; other ids are not guaranteed compatible). The JSON records model revision, functions scanned/embedded, pooling and truncation limit. Scan JSON separately records `files_scanned`; `summary.files` counts files with findings.
+`--min-tokens` filters small functions; `--top N` applies to each pass separately (`0` = all).
 Memory grows quadratically with eligible function count. Supervise large runs and set process limits on your host.
 
 ## Mutation and validation
