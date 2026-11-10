@@ -97,6 +97,7 @@ def find_overlaps(
     min_tokens: int,
     embed_fn: EmbedFn | None,
     semantic_threshold: float = _SEMANTIC_THRESHOLD,
+    embed_topk: int = 0,
 ) -> list[OverlapPair]:
     """Return ALL function pairs scoring >= ``threshold``, ranked descending (the injected-scoring core).
 
@@ -112,6 +113,11 @@ def find_overlaps(
         vectors = embed_fn([f.source for f in survivors])  # L2-normalized rows (np.ndarray)
         matrix = vectors @ vectors.T  # cosine matrix; dot == cosine because rows are unit-norm
         embeddable = [bool(f.source.strip()) for f in survivors]
+        if embed_topk > 0:  # two-stage (q162): per-function embedding top-k neighbours bypass the api gate
+            ranks = (-matrix).argsort(axis=1).argsort(axis=1)  # rank 0 = self
+            neighbours = (ranks <= embed_topk) | (ranks.T <= embed_topk)
+            percentile = 1.0 - ranks / max(count - 1, 1)
+            percentile = (percentile + percentile.T + abs(percentile - percentile.T)) / 2  # elementwise max, no numpy import
 
     pairs: list[OverlapPair] = []
     for i in range(count):
@@ -134,11 +140,15 @@ def find_overlaps(
                 continue
 
             api = clones.jaccard(sem_i, sem_j)
-            if api < semantic_threshold:
+            bypass = use_embed and embed_topk > 0 and bool(neighbours[i, j])
+            if api < semantic_threshold and not bypass:
                 continue
             struct = clones.clone_similarity(list(tokens_i), list(tokens_j))
 
-            if use_embed:
+            if use_embed and embed_topk > 0:  # two-stage final score: percentile-normalised cosine, struct, api
+                embed = float(matrix[i, j])
+                combined = 0.3 * float(percentile[i, j]) + 0.4 * struct + 0.3 * api
+            elif use_embed:
                 assert matrix is not None  # use_embed implies the cosine matrix was built
                 embed_value = float(matrix[i, j])
                 embed: float | None = embed_value
@@ -204,7 +214,8 @@ def _json_payload(pairs: list[OverlapPair], *, embed_active: bool, threshold: fl
     }
 
 
-def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool) -> int:
+def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool,
+        embed_topk: int = 0) -> int:
     """Build the corpus, run the all-pairs audit, render, and ALWAYS return 0 (advisory, never blocks)."""
     embed_fn: EmbedFn | None = None
     if not no_embed:
@@ -217,7 +228,7 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
     eligible = sum(len(f.record.tokens) >= min_tokens for f in corpus)
     if not eligible:
         raise ValueError("No functions meet min_tokens; no comparisons performed")
-    pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens, embed_fn=embed_fn)
+    pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens, embed_fn=embed_fn, embed_topk=embed_topk)
     total_pairs = len(pairs)
     if top > 0:  # top <= 0 means "all" (as in reachability-scan); avoids a negative back-slice
         pairs = pairs[:top]
