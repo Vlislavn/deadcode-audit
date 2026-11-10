@@ -9,6 +9,11 @@ if TYPE_CHECKING:
 
     import numpy as np
 
+# trust_remote_code runs repository code: allowed ONLY for these ids, always at the pinned commit (q162).
+_PINNED_REMOTE = {
+    "codesage/codesage-small-v2": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
+    "jinaai/jina-embeddings-v2-base-code": "516f4baf13dec4ddddda8631e019b5737c8bc250",
+}
 _MODEL: tuple[str, Any, Any] | None = None
 _BATCH = 4
 _MAX_TOKENS = 512
@@ -23,8 +28,16 @@ def get_embedder(model_id: str) -> Callable[[list[str]], np.ndarray]:
     torch.set_num_threads(2)
     if _MODEL is None or _MODEL[0] != model_id:
         _MODEL = None
-        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=False)
-        model = AutoModel.from_pretrained(model_id, trust_remote_code=False).eval()
+        revision = _PINNED_REMOTE.get(model_id)
+        remote = revision is not None
+        if model_id.startswith("codesage/"):  # pinned remote code predates transformers>=4.50 Conv1D move
+            import transformers.modeling_utils as modeling_utils
+            import transformers.pytorch_utils as pytorch_utils
+
+            modeling_utils.Conv1D = pytorch_utils.Conv1D
+        extra = {"add_eos_token": True} if model_id.startswith("codesage/") else {}
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=remote, revision=revision, **extra)
+        model = AutoModel.from_pretrained(model_id, trust_remote_code=remote, revision=revision).eval()
         _MODEL = (model_id, tokenizer, model)
     _, tokenizer, model = _MODEL
 

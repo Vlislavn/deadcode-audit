@@ -162,9 +162,10 @@ def _cmd_overlaps(args: argparse.Namespace) -> int:
         threshold=args.threshold,
         top=args.top,
         min_tokens=args.min_tokens,
-        no_embed=args.no_embed,
+        no_embed=not args.embed,
         model=args.model,
         as_json=args.json,
+        embed_topk=args.embed_topk,
     )
 
 
@@ -284,15 +285,22 @@ def _build_parser() -> argparse.ArgumentParser:
     overlaps_parser.add_argument("--threshold", type=float, default=0.55)
     overlaps_parser.add_argument("--top", type=int, default=50, help="Keep the top N pairs (0 = all)")
     overlaps_parser.add_argument("--min-tokens", type=int, default=40)
+    overlaps_parser.add_argument("--no-embed", action="store_true", help="Default; kept so existing scripts keep working")
     overlaps_parser.add_argument(
-        "--no-embed",
+        "--embed",
         action="store_true",
-        help="Skip code embeddings; deterministic struct+api only",
+        help="Opt in to code embeddings (default: deterministic struct+api only; q162 found no accepted embedding)",
     )
     overlaps_parser.add_argument(
         "--model",
-        default="microsoft/codebert-base",
-        help="HF code-embedding model id ([overlap] extra)",
+        default="codesage/codesage-small-v2",
+        help="HF code-embedding model id ([overlap] extra); codesage-small-v2/jina-v2-base-code load pinned remote code",
+    )
+    overlaps_parser.add_argument(
+        "--embed-topk",
+        type=int,
+        default=0,
+        help="Two-stage: each function's top-K embedding neighbours bypass the api gate (0 = off; needs --embed)",
     )
     overlaps_parser.add_argument("--json", action="store_true", help="JSON output")
 
