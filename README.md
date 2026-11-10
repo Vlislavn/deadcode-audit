@@ -45,7 +45,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory |
 | Import cycles | `deadcode cycles [--advisory] --json` |
-| Function overlap | `deadcode overlaps --json` — advisory |
+| Function overlap | `deadcode overlaps --json` — advisory, two-pass (add `--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |
 | Mutation gate | `deadcode mutation-targets`, `deadcode run-mutmut-changed` — `--compare-branch main` |
 | Helpers | `deadcode rules`, `trend`, `changed-python-files`, `mypy-targets` — `--null` for machine output |
@@ -61,7 +61,7 @@ uv run --no-sync pytest -q
 uv build
 ```
 
-- **Embeddings** (`overlaps`): the first run downloads CodeBERT; inference is local CPU, no paid API. `--no-embed` uses the deterministic path only. Model or dependency failures stop the command. Cosine similarity is a heuristic for inspection, not permission to delete code. Memory grows with eligible function count — supervise large runs.
+- **Two-pass overlaps** (`overlaps`, default): pass 1 is deterministic (structural tokens + API-name Jaccard, `--threshold`, keys `pairs`/`count`); pass 2 embeds each function with `codesage/codesage-small-v2` (pinned revision, embed-only, masked mean-pool, L2, cosine) and lists each function's top-3 neighbours missing from pass 1 as type-4 candidates (keys `embed_pairs`/`embed_count`). `--no-embed` runs pass 1 only; if torch/transformers or the model are unavailable the command prints one `warning:` line to stderr and returns pass 1 (`embed_active: false`). The first run downloads CodeSage (~1 GB) and executes its pinned repository code (`trust_remote_code`, pinned ids only); inference is local CPU, no paid API; `--top N` applies per pass (`0` = all). On 50 real helpers with hand-written type-4 rewrites CodeSage embed-only reached recall@3 0.92 vs 0.63 for pass 1; candidates are leads, not proof of equivalence or permission to delete code. Memory grows quadratically with eligible function count — supervise large runs.
 - **Mutation** (`mutmut` 3.7.0): POSIX only — use macOS/Linux/WSL. The native owner copies broad roots but mutates only the selected files. Failed baselines stop the run; repeated test passes, subprocess associations and process identity remain isolated. Repository-read assets belong in `project.mutation_also_copy`. Runs use a disposable `mutants/` directory, plus a private cleaned scratch tree for every pytest pass/fork. The mutation-only per-test safety default is 5s; `DEADCODE_MUTMUT_TEST_TIMEOUT_SECONDS` can override it within `(0, 60]`. Explicit `[tool.mutmut].pytest_add_cli_args` timeout settings are preserved unless the environment overrides them; broad global suite addopts are not the mutation budget.
 - Install extras together: a subsequent exact sync with fewer extras removes previously installed ones. The Vulture integration test requires its extra.
 
