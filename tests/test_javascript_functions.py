@@ -113,6 +113,41 @@ def test_valid_source_without_executable_functions_is_legitimately_empty(tmp_pat
     assert collect_functions("const value = 1;\n", tmp_path / "empty.js") == []
 
 
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<p>a & b</p>",
+        "<p>a && b</p>",
+        "<p>a & b & c</p>",
+        "<p>&b</p>",
+        "<>R & C \u2192 O</>",
+        "<li><b>x</b> & {y && z} & w</li>",
+        "<p>a &nbsp b &amp; c</p>",
+    ],
+)
+def test_bare_ampersand_in_jsx_text_is_valid_jsx_and_keeps_exact_offsets(tmp_path, markup):
+    source = f"const A = () => {markup};\nfunction after() {{ return 1; }}\n"
+
+    records = collect_functions(source, tmp_path / "view.jsx")
+
+    raw = source.encode("utf-8")
+    spans = [raw[r.start_byte : r.end_byte].decode("utf-8") for r, _ in records]
+    assert spans == [f"() => {markup}", "function after() { return 1; }"]
+    assert [snippet for _, snippet in records] == spans  # source text is the original bytes, not the repair
+    assert [r.symbol for r, _ in records] == ["A", "after"]
+
+
+def test_ampersand_repair_never_hides_a_real_jsx_syntax_error(tmp_path):
+    with pytest.raises(SyntaxError, match=r"bad\.jsx"):
+        collect_functions("const A = () => <p>a & b {</p>;\n", tmp_path / "bad.jsx")
+
+
+def test_the_bitwise_and_operator_is_not_rewritten(tmp_path):
+    [(record, snippet)] = collect_functions("const f = (a, b) => a & b;\n", tmp_path / "ops.js")
+    assert snippet == "(a, b) => a & b"
+    assert record.tokens
+
+
 def test_parse_error_refuses_the_entire_file_before_returning_partial_functions(
     tmp_path,
 ):

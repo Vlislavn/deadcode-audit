@@ -149,26 +149,46 @@ def test_actual_source_slices_are_passed_to_the_shared_embedder_with_counts_and_
     )
 
 
-def test_full_parse_refusal_happens_before_embedding_model_load(tmp_path, monkeypatch):
+def test_unparseable_js_file_is_skipped_with_a_warning_naming_it_and_the_model_still_runs(
+    tmp_path, monkeypatch, capsys
+):
     source = sources(tmp_path, monkeypatch)
     (source / "broken.js").write_text(
         "function earlier() { return 1; }\nfunction broken( {\n"
     )
     calls = []
-    monkeypatch.setattr(
-        overlap_embed, "get_embedder", lambda _model: calls.append(True)
-    )
-    with pytest.raises(SyntaxError):
-        overlaps.run(
-            paths=["src"],
-            threshold=0,
-            top=0,
-            min_tokens=1,
-            no_embed=False,
-            model="must-not-load",
-            as_json=True,
-        )
-    assert calls == []
+
+    def get_embedder(model):
+        calls.append(model)
+        return lambda texts: np.eye(len(texts))
+
+    monkeypatch.setattr(overlap_embed, "get_embedder", get_embedder)
+    monkeypatch.setattr(overlap_embed, "model_metadata", lambda: {"model": "fake"})
+    assert overlaps.run(
+        paths=["src"], threshold=0, top=0, min_tokens=1, no_embed=False, model="m", as_json=True
+    ) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert calls == ["m"] and payload["embed_active"] is True
+    assert "earlier" not in captured.out  # the whole broken file is skipped, not partially read
+    assert [line for line in captured.err.splitlines() if "broken.js" in line] == [
+        "warning: src/broken.js does not parse; skipping overlap analysis"
+    ]
+    assert payload["functions_scanned"] == 3
+
+
+def test_jsx_with_bare_ampersands_is_analysed_like_valid_jsx(tmp_path, monkeypatch, capsys):
+    source = sources(tmp_path, monkeypatch)
+    jsx = "export const A = () => <li>Readiness & calibration && more</li>;\n"
+    (source / "d.jsx").write_text(jsx)
+    assert overlaps.run(
+        paths=["src"], threshold=0, top=0, min_tokens=1, no_embed=True, model="m", as_json=True
+    ) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    [entry] = [f for f in payload["function_inputs"] if f["file"] == "src/d.jsx"]
+    assert entry["source_sha256"] == hashlib.sha256(jsx[len("export const A = ") : -2].encode()).hexdigest()
+    assert "does not parse" not in captured.err
 
 
 def test_python_only_does_not_require_the_js_extra_but_js_refuses_missing_parser(
@@ -388,8 +408,8 @@ def test_proper_containment_can_share_one_boundary(first_span, second_span):
     def record(span):
         return clones.FuncRecord(Path("entry.js"), 1, "arrow", ("Return",), frozenset(),
                                   "javascript", 1, *span)
-    assert overlaps._strict_same_file_js_containment(record(first_span), record(second_span))
-    assert overlaps._strict_same_file_js_containment(record(second_span), record(first_span))
+    assert overlaps._strict_same_file_containment(record(first_span), record(second_span))
+    assert overlaps._strict_same_file_containment(record(second_span), record(first_span))
 
 
 def test_python_functions_without_byte_spans_keep_their_existing_candidate_behavior():

@@ -6,6 +6,9 @@
 - Mixed Python/JS/TS scan/CI and function overlaps with exact source identities (`javascript` extra; Oxlint 1.90.0, Tree-sitter 0.25.2 pinned to avoid reproduced 0.26.0 native corruption). Python-only results unchanged; no JS dead-export/Markdown/mutation claim.
 - Overlaps skip strict same-file JS/TS ancestor/descendant source-span pairs and compare within one language pool; siblings, cross-file pairs and embedding inputs are kept.
 
+### Fixed
+- `overlaps`: any exception while loading/running the pass-2 model (e.g. transformers 5.x `all_tied_weights_keys`) warns once, naming the cause, and falls back to pass 1. A JS/TS file that does not parse is skipped with a warning instead of aborting the run; bare `&` in JSX text (rejected by both grammars) now parses. Python methods and their nested closures are no longer reported as overlaps.
+
 ### Changed
 - Isolate every native pytest pass/fork in a private cleaned scratch tree. Bound mutation tests with configurable pytest-timeout safety (default 5s, max 60s); keep harness-health counters strict and preserve explicit native budgets.
 - Skip comment-only mutation work only after strict merge-base AST equivalence; retain added files, defaults, decorators, annotations and all real code changes, with an explicit no-op receipt.

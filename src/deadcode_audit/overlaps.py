@@ -2,13 +2,13 @@
 
 Pass 1 (deterministic, always runs): every function in ``src/`` (Python, plus JavaScript/TypeScript when the
 ``javascript`` extra is installed) is compared against every other within its language pool (upper-triangle,
-each pair once; strict same-file JS/TS ancestor/descendant source-span pairs are skipped);
+each pair once; strict same-file ancestor/descendant source-span pairs, e.g. a method and its nested closure, are skipped);
 score = 0.6 * structural token similarity + 0.4 * API-name Jaccard.
 Pass 2 (CodeSage embed-only, default): each function's top-``_EMBED_TOPK`` cosine neighbours that pass 1 did
 not already report are added as type-4 (same behaviour, different code) candidates, ranked by cosine.
 The embedder is dependency-INJECTED (``overlap_embed.get_embedder``), so this module imports without
-torch/numpy and tests pass a fake embedder. If the model or its extras are missing, ``run`` warns once and
-returns pass 1 only. On-demand only — never a gate, ``run`` always returns 0.
+torch/numpy and tests pass a fake embedder. If the model or its extras are missing, or loading/running it fails for any reason, ``run`` warns once
+and returns pass 1 only. On-demand only — never a gate, ``run`` always returns 0.
 
 Reuses the Tier 6 primitives in :mod:`deadcode_audit.clones` (tokens, structural similarity, the
 API-surface Jaccard) and :mod:`deadcode_audit.diffscope` (the ``src`` corpus). The sound length
@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Callable
@@ -43,7 +44,6 @@ _SEMANTIC_THRESHOLD = 0.3
 
 # Pass 2 keeps each function's top-3 cosine neighbours (the q162 v2 rule was evaluated at recall@3).
 _EMBED_TOPK = 3
-_JS_FUNCTION_LANGUAGES = frozenset({"javascript", "typescript"})
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,10 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
         if path.suffix in javascript.SUFFIXES:
             from deadcode_audit.javascript_functions import collect_functions
             source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
-            funcs.extend(_SourcedFunc(record, text) for record, text in collect_functions(source, path))
+            try:
+                funcs.extend(_SourcedFunc(record, text) for record, text in collect_functions(source, path))
+            except SyntaxError:  # same policy as Python: one malformed file never aborts the audit
+                print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
         source = diffscope.read_text(path)
         tree = safe_parse(source)
@@ -95,13 +98,21 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
             # One malformed file must not crash the whole audit; warn and skip it.
             print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
+        line_starts = _line_starts(source.encode("utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 tokens = tuple(clones.normalize_function(node))
-                record = clones.FuncRecord(path, node.lineno, node.name, tokens, clones.semantic_signature(tokens))
+                record = clones.FuncRecord(path, node.lineno, node.name, tokens, clones.semantic_signature(tokens),
+                                           start_byte=line_starts[node.lineno - 1] + node.col_offset,
+                                           end_byte=line_starts[node.end_lineno - 1] + node.end_col_offset)
                 # Fail-open: a None segment (rare, position-less node) -> "" -> deterministic-only for this fn.
                 funcs.append(_SourcedFunc(record=record, source=ast.get_source_segment(source, node) or ""))
     return funcs
+
+
+def _line_starts(raw: bytes) -> list[int]:
+    """Byte offset of each line start, splitting on the same \\n, \\r\\n and \\r that ``ast`` counts."""
+    return [0, *(match.end() for match in re.finditer(rb"\r\n|\r|\n", raw))]
 
 
 def _combined(struct: float, api: float) -> float:
@@ -118,10 +129,8 @@ def _input_identity(function: _SourcedFunc) -> dict:
     return result
 
 
-def _strict_same_file_js_containment(first: clones.FuncRecord, second: clones.FuncRecord) -> bool:
-    """Return whether two valid JS/TS source spans strictly contain one another."""
-    if first.language not in _JS_FUNCTION_LANGUAGES or second.language not in _JS_FUNCTION_LANGUAGES:
-        return False
+def _strict_same_file_containment(first: clones.FuncRecord, second: clones.FuncRecord) -> bool:
+    """Return whether two valid same-file function source spans strictly contain one another (any language)."""
     if first.file_path != second.file_path:
         return False
     spans = (first.start_byte, first.end_byte, second.start_byte, second.end_byte)
@@ -137,8 +146,8 @@ def _strict_same_file_js_containment(first: clones.FuncRecord, second: clones.Fu
 
 
 def _comparable(first: _SourcedFunc, second: _SourcedFunc) -> bool:
-    """Pairs are compared within one language pool, never across a strict same-file JS/TS containment."""
-    return first.record.language == second.record.language and not _strict_same_file_js_containment(
+    """Pairs are compared within one language pool, never across a strict same-file containment."""
+    return first.record.language == second.record.language and not _strict_same_file_containment(
         first.record, second.record
     )
 
@@ -146,7 +155,7 @@ def _comparable(first: _SourcedFunc, second: _SourcedFunc) -> bool:
 def _count_skipped_containment(funcs: list[_SourcedFunc], min_tokens: int) -> int:
     survivors = [function for function in funcs if len(function.record.tokens) >= min_tokens]
     return sum(
-        _strict_same_file_js_containment(survivors[i].record, survivors[j].record)
+        _strict_same_file_containment(survivors[i].record, survivors[j].record)
         for i in range(len(survivors))
         for j in range(i + 1, len(survivors))
     )
@@ -297,11 +306,16 @@ def _load_embedder(model: str) -> EmbedFn | None:
 
     try:
         return overlap_embed.get_embedder(model)
-    except (ImportError, OSError) as error:
-        reason = (str(error).splitlines() or [""])[0]
-        print(f"warning: embedding pass skipped, {model} unavailable ({type(error).__name__}: {reason}); "
-              "showing deterministic pass 1 only (install with `uv sync --extra embeddings`)", file=sys.stderr)
+    except Exception as error:  # noqa: BLE001 - any load failure (e.g. transformers 5.x) falls back to pass 1
+        _warn_embed_skipped(model, error)
         return None
+
+
+def _warn_embed_skipped(model: str, error: Exception) -> None:
+    reason = (str(error).splitlines() or [""])[0]
+    print(f"warning: embedding pass skipped, {model} unavailable ({type(error).__name__}: {reason}); "
+          "showing deterministic pass 1 only (install with `uv sync --extra embeddings`; the pinned CodeSage "
+          "remote code needs transformers <5)", file=sys.stderr)
 
 
 def _language_payload(corpus: list[_SourcedFunc], *, min_tokens: int, embed_active: bool) -> dict[str, object]:
@@ -332,8 +346,13 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
         raise ValueError("No functions meet min_tokens; no comparisons performed")
     embed_fn = None if no_embed else _load_embedder(model)
     all_pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens)
-    all_embed = (find_embed_candidates(corpus, min_tokens=min_tokens, embed_fn=embed_fn, known=all_pairs)
-                 if embed_fn is not None else [])
+    all_embed: list[OverlapPair] = []
+    if embed_fn is not None:
+        try:
+            all_embed = find_embed_candidates(corpus, min_tokens=min_tokens, embed_fn=embed_fn, known=all_pairs)
+        except Exception as error:  # noqa: BLE001 - a failing model run also falls back to pass 1
+            _warn_embed_skipped(model, error)
+            embed_fn = None
     pairs, embed_pairs = (all_pairs[:top], all_embed[:top]) if top > 0 else (all_pairs, all_embed)
     embed_active = embed_fn is not None
     if as_json:

@@ -88,14 +88,16 @@ omitted. Fingerprints and embedding proximity remain candidates, never functiona
 Each source slice comes from the same captured UTF-8 buffer as the AST. Byte offsets, human location,
 language, source hash/size, eligibility and embedding status identify inputs and pair endpoints.
 Anonymous callbacks and nested functions on one line cannot collapse to one identity. Every file is
-validated before the model is loaded; malformed late input cannot yield a partial successful result.
+parsed before the model is loaded; a file that does not parse is skipped whole (never partially read) with one
+`warning:` line naming it, and the run continues. Any failure while loading or running the embedding model falls
+back to pass 1 with one warning (the pinned CodeSage remote code currently needs transformers <5).
 Known dynamic entrypoints are not treated as dead. Python and JS/TS share the same two-pass pipeline
 (pass 1 deterministic struct+API; pass 2 pinned CodeSage embed-only candidates, with its pooling,
-normalization, batch size and `--model` option), but compare only within language pools in both passes; JS and TS share one pool. Strict same-file JS/TS ancestor/descendant byte-span pairs
+normalization, batch size and `--model` option), but compare only within language pools in both passes; JS and TS share one pool. Strict same-file ancestor/descendant byte-span pairs (Python and JS/TS alike, e.g. a method and its nested closure)
 are removed before scoring because nested function bodies are not independent duplicates; identical
 siblings and cross-file pairs remain candidates. JS-containing JSON reports expose
 `pairs_skipped_same_file_containment` for functions eligible at `min_tokens`; the Python-only report
-shape is unchanged. Cross-language
+shape is unchanged (its pairs are filtered the same way, uncounted). Cross-language
 structural/API scores are not calibrated.
 
 Historical receipts (hybrid CodeBERT scoring, before the two-pass default and before the containment filter): original Python192functions/173eligible
@@ -130,6 +132,16 @@ No GC disable, import-order retry, special filename, increased budget, vendored 
 or new process manager was added. The unpatched0.26.0 is rejected before invoking native getters;
 new parser versions require contract/regression validation. Tests cover long lines/Unicode and
 binding kinds, including method properties versus lexical named-function bindings.
+
+### Bare `&` in JSX text
+
+tree-sitter-javascript 0.25.0 and the tsx grammar (typescript 0.23.2) both lex `&` only as the start of a
+complete HTML entity, so valid JSX such as `<p>a & b</p>` or `<p>a && b</p>` (accepted by esbuild) parses to an
+ERROR node; choosing the tsx grammar for `.jsx` does not help. Function extraction therefore re-parses once such
+an `&`-only token inside an ERROR node that follows JSX content (or sits first under a JSX element/fragment) is
+replaced by `_` (same byte length: offsets, columns, spans unchanged; snippets and hashes come from the original
+bytes). Operators outside JSX are never rewritten, and a genuine JSX syntax error stays an error (the file is
+then skipped with a warning by `overlaps`). The `scan` path (Oxlint) is unaffected.
 
 Compact machine-readable verification: [JS_VERIFICATION.json](JS_VERIFICATION.json). Raw local logs,
 model pair reports and crash evidence stay private; candidate counts are not accuracy metrics.

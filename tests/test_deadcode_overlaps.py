@@ -219,9 +219,77 @@ def test_cli_falls_back_to_pass1_with_one_warning_when_model_missing(
     assert len(warnings) == 1 and warnings[0].startswith("warning:") and "torch" in warnings[0]
 
 
+@pytest.mark.parametrize("stage", ["load", "run"])
+def test_cli_any_embed_exception_falls_back_to_pass1_with_one_warning_naming_the_cause(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], stage: str
+) -> None:
+    # transformers 5.x: loading the pinned CodeSage remote code raises AttributeError, not ImportError/OSError.
+    cause = "'CodeSageModel' object has no attribute 'all_tied_weights_keys'"
+
+    def broken_embed(_sources: list[str]) -> np.ndarray:
+        raise AttributeError(cause)
+
+    def load(_model: str):
+        if stage == "load":
+            raise AttributeError(cause)
+        return broken_embed
+
+    _patch_corpus(monkeypatch, load)
+    assert main(["overlaps", "--json", "--min-tokens", "1"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["embed_active"] is False and payload["model"] is None and payload["embed_pairs"] == []
+    warnings = [line for line in captured.err.splitlines() if line.strip()]
+    assert len(warnings) == 1 and warnings[0].startswith("warning:")
+    assert "AttributeError" in warnings[0] and "all_tied_weights_keys" in warnings[0] and "transformers <5" in warnings[0]
+
+
 def test_cli_no_embed_never_loads_model(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     calls = _patch_corpus(monkeypatch, lambda _m: _fake_embed)
     assert main(["overlaps", "--no-embed", "--json", "--min-tokens", "1"]) == 0
     captured = capsys.readouterr()
     assert calls == [] and captured.err == ""
     assert json.loads(captured.out)["embed_active"] is False
+
+
+# --- same-file containment applies to Python too ---
+
+
+def _python_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> list[overlaps._SourcedFunc]:
+    monkeypatch.setattr(overlaps.diffscope, "REPO_ROOT", tmp_path)
+    (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text(body, encoding="utf-8")
+    return overlaps.build_corpus(["src"])
+
+
+_NESTED = (
+    "def get_item_notes(client, key):\n"
+    "    def _read(note):\n"
+    "        return client.fetch(note.id)\n"
+    "    return [_read(n) for n in client.children(key)]\n"
+    "\n\n"
+    "def sibling(client, key):\n"
+    "    def _read(note):\n"
+    "        return client.fetch(note.id)\n"
+    "    return [_read(n) for n in client.children(key)]\n"
+)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_python_method_and_its_nested_closure_are_not_an_overlap_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newline: str
+) -> None:
+    corpus = _python_corpus(tmp_path, monkeypatch, _NESTED.replace("\n", newline))
+    pairs = overlaps.find_overlaps(corpus, threshold=0, min_tokens=1, semantic_threshold=0)
+    line_pairs = [{p.a_line, p.b_line} for p in pairs]
+    # Siblings (the two identical bodies in different functions) stay comparable.
+    assert {2, 8} in line_pairs and {1, 7} in line_pairs
+    assert {1, 2} not in line_pairs and {7, 8} not in line_pairs
+
+
+def test_python_spans_are_utf8_byte_offsets_of_the_def(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "# é\ndef f(x):\n    return x\n"
+    [func] = _python_corpus(tmp_path, monkeypatch, source)
+    raw = source.encode("utf-8")
+    assert raw[func.record.start_byte : func.record.end_byte].decode("utf-8") == "def f(x):\n    return x"

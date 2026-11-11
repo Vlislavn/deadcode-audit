@@ -141,6 +141,45 @@ def _parse_issues(root):
     return issues
 
 
+_JSX_PARENTS = frozenset({"jsx_element", "jsx_fragment"})
+
+
+def _is_stray_jsx_ampersand(token, data: bytearray) -> bool:
+    """Whether ``token`` is an ``&``-only leaf that error recovery split out of JSX text."""
+    if token.child_count or token.is_named or set(data[token.start_byte : token.end_byte]) != {0x26}:
+        return False
+    before = token.prev_sibling
+    if before is None:
+        return token.parent.parent is not None and token.parent.parent.type in _JSX_PARENTS
+    return before.type.startswith("jsx_") and before.type != "jsx_closing_element"
+
+
+def _repair_jsx_ampersands(parser, buffer: bytes):
+    """Parse ``buffer``; work around the grammars' refusal of a bare ``&`` in JSX text.
+
+    Both tree-sitter-javascript and the tsx grammar lex ``&`` only as the start of a complete HTML
+    entity, so valid JSX such as ``<p>a & b</p>`` yields an ERROR node. Only ``&``-only tokens inside
+    an ERROR node that directly follow JSX content (or sit first under a JSX element/fragment) are
+    touched: each is replaced by ``_`` (same byte length, so every offset, column and span is
+    unchanged) and the buffer re-parsed. Returns ``(tree, analysed_buffer)``; the caller still owns
+    the original bytes.
+    """
+    data = bytearray(buffer)
+    while True:  # each round replaces >= 1 '&', so it ends
+        tree = parser.parse(bytes(data))
+        fixes = [
+            (token.start_byte, token.end_byte)
+            for issue in _parse_issues(tree.root_node)
+            if issue.is_error
+            for token in issue.children
+            if _is_stray_jsx_ampersand(token, data)
+        ]
+        if not fixes:
+            return tree, bytes(data)
+        for start, end in fixes:
+            data[start:end] = b"_" * (end - start)
+
+
 def _parse_failure(
     root, buffer: bytes, path: Path, typescript: bool, issues
 ) -> SyntaxError:
@@ -525,7 +564,7 @@ def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
     """
     buffer = source.encode("utf-8")
     parser, typescript = _load_parser(path)
-    tree = parser.parse(buffer)
+    tree, analysed = _repair_jsx_ampersands(parser, buffer)
     root = tree.root_node
     issues = _parse_issues(root)
     if root.has_error or issues:
@@ -545,7 +584,7 @@ def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
     functions.sort(key=lambda node: (node.start_byte, -node.end_byte))
     records = []
     for node in functions:
-        tokens = _runtime_body_tokens(node, buffer)
+        tokens = _runtime_body_tokens(node, analysed)
         token_tuple = tuple(tokens)
         record = FuncRecord(
             file_path=path,
