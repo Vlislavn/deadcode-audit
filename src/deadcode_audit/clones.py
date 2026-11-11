@@ -148,6 +148,10 @@ class FuncRecord:
     symbol: str
     tokens: tuple[str, ...]
     semantic: frozenset[str]
+    language: str = "python"
+    column: int = 1
+    start_byte: int | None = None
+    end_byte: int | None = None
 
 
 def collect_functions(source: str, path: Path) -> list[FuncRecord]:
@@ -189,9 +193,9 @@ def find_near_duplicate_functions(
             continue
         best: tuple[float, FuncRecord] | None = None
         for other in corpus:
-            if other is target or len(other.tokens) < min_tokens:
+            if other is target or other.language != target.language or len(other.tokens) < min_tokens:
                 continue
-            if (other.file_path, other.line, other.symbol) == (target.file_path, target.line, target.symbol):
+            if (other.file_path, other.line, other.column, other.symbol) == (target.file_path, target.line, target.column, target.symbol):
                 continue
             # length pre-filter using the SOUND upper bound on SequenceMatcher.ratio():
             # ratio <= 2*min_len/(len_a+len_b). Skipping below this can never drop a pair that

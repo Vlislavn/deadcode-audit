@@ -1,7 +1,9 @@
 """On-demand, advisory function-overlap audit: full all-pairs, two passes.
 
-Pass 1 (deterministic, always runs): every function in ``src/`` is compared against every other
-(upper-triangle, each pair once); score = 0.6 * structural token similarity + 0.4 * API-name Jaccard.
+Pass 1 (deterministic, always runs): every function in ``src/`` (Python, plus JavaScript/TypeScript when the
+``javascript`` extra is installed) is compared against every other within its language pool (upper-triangle,
+each pair once; strict same-file JS/TS ancestor/descendant source-span pairs are skipped);
+score = 0.6 * structural token similarity + 0.4 * API-name Jaccard.
 Pass 2 (CodeSage embed-only, default): each function's top-``_EMBED_TOPK`` cosine neighbours that pass 1 did
 not already report are added as type-4 (same behaviour, different code) candidates, ranked by cosine.
 The embedder is dependency-INJECTED (``overlap_embed.get_embedder``), so this module imports without
@@ -16,13 +18,15 @@ pre-filter is inlined so a passing pair is never dropped.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sys
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import clones, diffscope
+from deadcode_audit import clones, config, diffscope, javascript, scan
 from deadcode_audit.framework import safe_parse
 
 if TYPE_CHECKING:
@@ -39,6 +43,7 @@ _SEMANTIC_THRESHOLD = 0.3
 
 # Pass 2 keeps each function's top-3 cosine neighbours (the q162 v2 rule was evaluated at recall@3).
 _EMBED_TOPK = 3
+_JS_FUNCTION_LANGUAGES = frozenset({"javascript", "typescript"})
 
 
 @dataclass(frozen=True)
@@ -63,12 +68,27 @@ class OverlapPair:
     struct: float
     api: float
     embed: float | None
+    a_input: dict | None = None
+    b_input: dict | None = None
 
 
-def build_corpus() -> list[_SourcedFunc]:
+def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     """Collect every src function with its fingerprint tokens AND source segment, in one parse pass."""
     funcs: list[_SourcedFunc] = []
-    for path in diffscope.all_src_files():
+    if paths:
+        selected = scan.resolve_target_files(paths, changed=False, compare_branch="main",
+                                             exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+    else:
+        python = diffscope.all_src_files()
+        candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
+                                               exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+        selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
+    for path in selected:
+        if path.suffix in javascript.SUFFIXES:
+            from deadcode_audit.javascript_functions import collect_functions
+            source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
+            funcs.extend(_SourcedFunc(record, text) for record, text in collect_functions(source, path))
+            continue
         source = diffscope.read_text(path)
         tree = safe_parse(source)
         if tree is None:
@@ -88,17 +108,71 @@ def _combined(struct: float, api: float) -> float:
     return _W_STRUCT * struct + _W_API * api
 
 
+def _input_identity(function: _SourcedFunc) -> dict:
+    record = function.record
+    raw = function.source.encode("utf-8")
+    result = {"file": record.file_path.as_posix(), "line": record.line, "symbol": record.symbol,
+              "language": record.language, "source_bytes": len(raw), "source_sha256": hashlib.sha256(raw).hexdigest()}
+    if record.language != "python":
+        result.update(column=record.column, start_byte=record.start_byte, end_byte=record.end_byte)
+    return result
+
+
+def _strict_same_file_js_containment(first: clones.FuncRecord, second: clones.FuncRecord) -> bool:
+    """Return whether two valid JS/TS source spans strictly contain one another."""
+    if first.language not in _JS_FUNCTION_LANGUAGES or second.language not in _JS_FUNCTION_LANGUAGES:
+        return False
+    if first.file_path != second.file_path:
+        return False
+    spans = (first.start_byte, first.end_byte, second.start_byte, second.end_byte)
+    if any(type(offset) is not int for offset in spans):
+        return False
+    first_start, first_end, second_start, second_end = spans
+    if min(spans) < 0 or first_start >= first_end or second_start >= second_end:
+        return False
+    contained = (first_start <= second_start and second_end <= first_end) or (
+        second_start <= first_start and first_end <= second_end
+    )
+    return contained and spans[:2] != spans[2:]
+
+
+def _comparable(first: _SourcedFunc, second: _SourcedFunc) -> bool:
+    """Pairs are compared within one language pool, never across a strict same-file JS/TS containment."""
+    return first.record.language == second.record.language and not _strict_same_file_js_containment(
+        first.record, second.record
+    )
+
+
+def _count_skipped_containment(funcs: list[_SourcedFunc], min_tokens: int) -> int:
+    survivors = [function for function in funcs if len(function.record.tokens) >= min_tokens]
+    return sum(
+        _strict_same_file_js_containment(survivors[i].record, survivors[j].record)
+        for i in range(len(survivors))
+        for j in range(i + 1, len(survivors))
+    )
+
+
 def _pair(first: _SourcedFunc, second: _SourcedFunc, combined: float, struct: float, api: float,
-          embed: float | None) -> OverlapPair:
+          embed: float | None, *, identities: bool = False) -> OverlapPair:
     return OverlapPair(
         first.record.file_path.as_posix(), first.record.line, first.record.symbol,
         second.record.file_path.as_posix(), second.record.line, second.record.symbol,
         round(combined, 3), round(struct, 3), round(api, 3), round(embed, 3) if embed is not None else None,
+        _input_identity(first) if identities else None,
+        _input_identity(second) if identities else None,
     )
 
 
-def _key(func: _SourcedFunc) -> tuple[str, int, str]:
-    return func.record.file_path.as_posix(), func.record.line, func.record.symbol
+def _key(func: _SourcedFunc) -> tuple[str, int, str, int | None]:
+    record = func.record
+    return record.file_path.as_posix(), record.line, record.symbol, record.start_byte
+
+
+def _pair_keys(pair: OverlapPair) -> frozenset[tuple[str, int, str, int | None]]:
+    """Both endpoints of a pair as ``_key`` tuples (JS/TS endpoints carry their byte offset)."""
+    first = pair.a_input or {"file": pair.a_file, "line": pair.a_line, "symbol": pair.a_symbol}
+    second = pair.b_input or {"file": pair.b_file, "line": pair.b_line, "symbol": pair.b_symbol}
+    return frozenset((d["file"], d["line"], d["symbol"], d.get("start_byte")) for d in (first, second))
 
 
 def find_overlaps(
@@ -108,12 +182,15 @@ def find_overlaps(
     min_tokens: int,
     semantic_threshold: float = _SEMANTIC_THRESHOLD,
 ) -> list[OverlapPair]:
-    """Pass 1: return ALL function pairs scoring >= ``threshold`` (struct + api), ranked descending."""
+    """Pass 1: return ALL comparable function pairs scoring >= ``threshold`` (struct + api), ranked descending."""
     survivors = [f for f in funcs if len(f.record.tokens) >= min_tokens]
+    mixed_metadata = any(f.record.language != "python" for f in funcs)
     pairs: list[OverlapPair] = []
     for i, first in enumerate(survivors):
         tokens_i, sem_i = first.record.tokens, first.record.semantic
         for second in survivors[i + 1 :]:
+            if not _comparable(first, second):
+                continue
             tokens_j, sem_j = second.record.tokens, second.record.semantic
 
             # Sound length pre-filter: skip only when the MAX possible combined score (api at its
@@ -130,7 +207,7 @@ def find_overlaps(
             struct = clones.clone_similarity(list(tokens_i), list(tokens_j))
             combined = _combined(struct, api)
             if combined >= threshold:
-                pairs.append(_pair(first, second, combined, struct, api, None))
+                pairs.append(_pair(first, second, combined, struct, api, None, identities=mixed_metadata))
     pairs.sort(key=lambda p: p.combined, reverse=True)
     return pairs
 
@@ -154,8 +231,13 @@ def find_embed_candidates(
     vectors = embed_fn([f.source for f in survivors])  # L2-normalized rows (np.ndarray)
     matrix = vectors @ vectors.T  # cosine matrix; dot == cosine because rows are unit-norm
     matrix[range(len(survivors)), range(len(survivors))] = -2.0  # a function is not its own neighbour
+    for i, first in enumerate(survivors):  # no neighbours across language pools or strict JS/TS containment
+        for j in range(i + 1, len(survivors)):
+            if not _comparable(first, survivors[j]):
+                matrix[i, j] = matrix[j, i] = -2.0
     nearest = (-matrix).argsort(axis=1)[:, : min(topk, len(survivors) - 1)]
-    reported = {frozenset(((p.a_file, p.a_line, p.a_symbol), (p.b_file, p.b_line, p.b_symbol))) for p in known}
+    reported = {_pair_keys(p) for p in known}
+    mixed_metadata = any(f.record.language != "python" for f in funcs)
 
     pairs: list[OverlapPair] = []
     seen: set[tuple[int, int]] = set()
@@ -165,12 +247,15 @@ def find_embed_candidates(
             if (low, high) in seen:
                 continue
             seen.add((low, high))
+            if matrix[low, high] <= -2.0:  # masked: not comparable (other language pool / JS containment)
+                continue
             first, second = survivors[low], survivors[high]
             if frozenset((_key(first), _key(second))) in reported:
                 continue
             api = clones.jaccard(first.record.semantic, second.record.semantic)
             struct = clones.clone_similarity(list(first.record.tokens), list(second.record.tokens))
-            pairs.append(_pair(first, second, _combined(struct, api), struct, api, float(matrix[low, high])))
+            pairs.append(_pair(first, second, _combined(struct, api), struct, api, float(matrix[low, high]),
+                               identities=mixed_metadata))
     pairs.sort(key=lambda p: p.embed or 0.0, reverse=True)
     return pairs
 
@@ -197,8 +282,8 @@ def _render_human(pairs: list[OverlapPair], embed_pairs: list[OverlapPair], *, e
 
 def _pair_json(p: OverlapPair) -> dict[str, object]:
     return {
-        "a": {"file": p.a_file, "line": p.a_line, "symbol": p.a_symbol},
-        "b": {"file": p.b_file, "line": p.b_line, "symbol": p.b_symbol},
+        "a": p.a_input or {"file": p.a_file, "line": p.a_line, "symbol": p.a_symbol},
+        "b": p.b_input or {"file": p.b_file, "line": p.b_line, "symbol": p.b_symbol},
         "combined": p.combined,
         "struct": p.struct,
         "api": p.api,
@@ -219,15 +304,33 @@ def _load_embedder(model: str) -> EmbedFn | None:
         return None
 
 
-def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool) -> int:
+def _language_payload(corpus: list[_SourcedFunc], *, min_tokens: int, embed_active: bool) -> dict[str, object]:
+    """Extra JSON keys, present only when the corpus holds non-Python functions."""
+    embedded = [f for f in corpus if embed_active and len(f.record.tokens) >= min_tokens]
+    return {
+        "functions_by_language": dict(Counter(f.record.language for f in corpus)),
+        "comparison_pools": "within-language; JavaScript and TypeScript share javascript",
+        "pairs_skipped_same_file_containment": _count_skipped_containment(corpus, min_tokens),
+        "function_inputs": [
+            {**_input_identity(f), "tokens": len(f.record.tokens),
+             "eligible": len(f.record.tokens) >= min_tokens,
+             "embedded": embed_active and len(f.record.tokens) >= min_tokens}
+            for f in corpus
+        ],
+        "embedded_by_language": dict(Counter(f.record.language for f in embedded)),
+    }
+
+
+def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool,
+        paths: list[str] | None = None) -> int:
     """Build the corpus, run pass 1 (+ pass 2 unless ``no_embed``/unavailable), render, ALWAYS return 0."""
-    embed_fn = None if no_embed else _load_embedder(model)
-    corpus = build_corpus()
+    corpus = build_corpus(paths)  # before the model load: a parse refusal must not pay for it
     if not corpus:
-        raise ValueError("No Python functions found in configured source roots")
+        raise ValueError("No executable functions found in selected source roots")
     eligible = sum(len(f.record.tokens) >= min_tokens for f in corpus)
     if not eligible:
         raise ValueError("No functions meet min_tokens; no comparisons performed")
+    embed_fn = None if no_embed else _load_embedder(model)
     all_pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens)
     all_embed = (find_embed_candidates(corpus, min_tokens=min_tokens, embed_fn=embed_fn, known=all_pairs)
                  if embed_fn is not None else [])
@@ -253,6 +356,8 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
         }
         if embed_active:
             payload["embedding"] = overlap_embed.model_metadata()
+        if any(f.record.language != "python" for f in corpus):
+            payload.update(_language_payload(corpus, min_tokens=min_tokens, embed_active=embed_active))
         print(json.dumps(payload, indent=2))
     else:
         print(_render_human(pairs, embed_pairs, embed_active=embed_active, threshold=threshold, model=model))

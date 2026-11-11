@@ -28,7 +28,8 @@ def _summary(diagnostics: list[Diagnostic]) -> dict[str, int]:
     }
 
 
-def render_json(diagnostics: list[Diagnostic], score: ScoreResult, *, files_scanned: int | None = None) -> str:
+def render_json(diagnostics: list[Diagnostic], score: ScoreResult, *, files_scanned: int | None = None,
+                coverage: dict[str, int] | None = None) -> str:
     """Machine envelope: score, label, per-engine counts, summary, and every diagnostic."""
     engines: dict[str, int] = {}
     for diag in diagnostics:
@@ -57,6 +58,8 @@ def render_json(diagnostics: list[Diagnostic], score: ScoreResult, *, files_scan
             for d in sorted(diagnostics, key=lambda d: (d.file_path, d.line, d.rule))
         ],
     }
+    if coverage is not None:
+        payload["coverage"] = coverage
     return json.dumps(payload, indent=2, sort_keys=False)
 
 

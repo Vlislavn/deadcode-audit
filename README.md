@@ -1,7 +1,7 @@
 # deadcode-audit
 
-Quality, dead-code, import-cycle, duplication and mutation checks for a target repository.
-Extracted from the source monorepo; the target repository supplies paths and policy, not scanner code.
+Quality, dead-code, import-cycle, duplication and mutation checks for a target repository, for Python and (optionally) JavaScript/TypeScript.
+The target repository supplies paths and policy, not scanner code.
 
 ## Start
 
@@ -40,23 +40,41 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 
 | Goal | Command |
 |---|---|
-| Findings and score | `deadcode scan [--json]` |
+| Findings and score | `deadcode scan [paths...] [--json]` — Python plus JS/TS (`javascript` extra + Oxlint) |
 | Enforce quality policy | `deadcode ci --json` — exit 1 on errors or score below threshold |
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory |
 | Import cycles | `deadcode cycles [--advisory] --json` |
-| Function overlap | `deadcode overlaps --json` — advisory, two-pass (add `--no-embed` for pass 1 only) |
+| Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |
 | Mutation gate | `deadcode mutation-targets`, `deadcode run-mutmut-changed` — `--compare-branch main` |
 | Helpers | `deadcode rules`, `trend`, `changed-python-files`, `mypy-targets` — `--null` for machine output |
 
 Advisory exit 0 means the audit ran, not that the code is clean; parse errors and command failures are not a clean result.
-Diff checks compare committed HEAD against the merge base; whole-tree scans include untracked Python source. Mutation selection skips only strict AST-equivalent changes (such as comments), reports that no-op explicitly, and still selects added or behaviorally changed files.
+Diff checks compare committed HEAD against the merge base; whole-tree scans include untracked supported source (Python-specific checks still select Python only). Mutation selection skips only strict AST-equivalent changes (such as comments), reports that no-op explicitly, and still selects added or behaviorally changed files.
+
+## JavaScript / TypeScript
+
+Optional; Python-only behaviour is unchanged. `scan`/`ci` accept `.js .cjs .mjs .jsx .ts .cts .mts .tsx` next to Python and run a pinned local **Oxlint 1.90.0** (only that version; Node `^20.19.0` or `>=22.12.0`). Install it once in the **target** checkout:
+
+```sh
+npm install --prefix .git/deadcode-js --ignore-scripts --no-audit --no-fund --save-exact oxlint@1.90.0
+export DEADCODE_OXLINT="$PWD/.git/deadcode-js/node_modules/.bin/oxlint"
+/path/to/deadcode-audit/.venv/bin/deadcode scan src scripts --json --no-history
+```
+
+- Scans never install tools, run `npx`, fetch rules, execute sources, load target plugins/configs or auto-fix. A missing/other backend version, malformed reply, incomplete coverage or process failure refuses.
+- Roots come from `project.source_roots` (e.g. `[src, javascript]`). Reported: unused local bindings/empty blocks (warnings), unreachable statements and syntax errors (errors). Host-invoked CommonJS exports are not declared dead. Markdown fences, unused-export graphs, reachability, Vulture and mutation stay Python-only.
+- JS-containing JSON adds `coverage: {python: N, javascript_typescript: N}`. Scoring uses the existing aggregate formula; it is not a calibrated JS defect rate.
+- Batches of ≤128 files, two threads, `DEADCODE_JS_SAFETY_SECONDS` wall-clock cap (default 60, max 120 per batch), replies >8 MiB rejected. `DEADCODE_OXLINT` is one executable, not shell arguments. Real-backend tests: `DEADCODE_TEST_OXLINT="$DEADCODE_OXLINT" uv run --no-sync pytest -q`.
+- **Overlaps:** with `--extra javascript` (plus `embeddings` for pass 2), `deadcode overlaps src javascript --json --top 0` extracts functions with official local Tree-sitter grammars (`tree-sitter==0.25.2`; 0.26.0 corrupts memory and is rejected). Both passes compare within a language pool (JS and TS share one; Python↔JS is never compared); strict same-file ancestor/descendant spans are skipped. JS-containing JSON adds per-function language, source hash/bytes/byte span, eligibility and embedding status. A whole-file syntax error refuses the run before any model load.
+
+Backend contract, primary sources, parser evidence: [docs/JAVASCRIPT.md](docs/JAVASCRIPT.md).
 
 ## Extras
 
 ```sh
-uv sync --all-extras   # or pick: --extra vulture --extra mutation --extra embeddings
+uv sync --all-extras   # or pick: --extra vulture --extra mutation --extra embeddings --extra javascript
 uv run --no-sync pytest -q
 uv build
 ```

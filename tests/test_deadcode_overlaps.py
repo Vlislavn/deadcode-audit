@@ -188,7 +188,7 @@ def _patch_corpus(monkeypatch: pytest.MonkeyPatch, embedder) -> list[str]:
         calls.append(model)
         return embedder(model)
 
-    monkeypatch.setattr(overlaps, "build_corpus", lambda: _CLI_FUNCS)
+    monkeypatch.setattr(overlaps, "build_corpus", lambda _paths=None: _CLI_FUNCS)
     monkeypatch.setattr(overlap_embed, "get_embedder", get_embedder)
     monkeypatch.setattr(overlap_embed, "model_metadata", lambda: {"model": "fake"})
     return calls
