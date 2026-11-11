@@ -90,14 +90,14 @@ def _run_scan(args: argparse.Namespace) -> scan_mod.ScanResult:
         exclude=cfg.exclude,
     )
     if not files and not args.changed:
-        raise ValueError("No Python source files found; check target paths/source_roots")
-    return scan_mod.run_scan(files, ALL_DETECTORS, cfg)
+        raise ValueError("No supported Python/JavaScript/TypeScript files found; check target paths/source_roots")
+    return scan_mod.run_source_scan(files, ALL_DETECTORS, cfg)
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
     result = _run_scan(args)
     if args.json:
-        print(output.render_json(result.diagnostics, result.score, files_scanned=result.file_count))
+        print(output.render_json(result.diagnostics, result.score, files_scanned=result.file_count, coverage=result.coverage))
         return 0
     if args.sarif:
         print(output.render_sarif(result.diagnostics))
@@ -130,7 +130,7 @@ def _cmd_ci(args: argparse.Namespace) -> int:
     fail_below = args.fail_below if args.fail_below is not None else (cfg.fail_below or 0)
     has_error = any(d.severity is Severity.ERROR for d in result.diagnostics)
     print(
-        output.render_json(result.diagnostics, result.score, files_scanned=result.file_count)
+        output.render_json(result.diagnostics, result.score, files_scanned=result.file_count, coverage=result.coverage)
         if args.json
         else output.render_terminal(result.diagnostics, result.score)
     )
@@ -143,8 +143,9 @@ def _cmd_ci(args: argparse.Namespace) -> int:
 def _cmd_rules(_args: argparse.Namespace) -> int:
     from deadcode_audit.detectors import ALL_DETECTORS
     from deadcode_audit.framework import all_rule_specs
+    from deadcode_audit.javascript import RULE_SPECS
 
-    for spec in all_rule_specs(ALL_DETECTORS):
+    for spec in (*all_rule_specs(ALL_DETECTORS), *RULE_SPECS):
         style = " [style]" if spec.style else ""
         print(f"{spec.rule:<34} {spec.engine:<13} {spec.default_severity.value:<8} {spec.category}{style}")
     return 0
@@ -165,6 +166,7 @@ def _cmd_overlaps(args: argparse.Namespace) -> int:
         no_embed=args.no_embed,
         model=args.model,
         as_json=args.json,
+        paths=args.paths,
     )
 
 
@@ -201,7 +203,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Python dead-code / quality audit")
+    parser = argparse.ArgumentParser(description="Python dead-code and Python/JavaScript/TypeScript quality audit")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def _with_compare(name: str, help_text: str, *, null: bool = False) -> argparse.ArgumentParser:
@@ -281,6 +283,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "overlaps",
         help="On-demand all-pairs function-overlap audit (semantic, advisory — never blocks)",
     )
+    overlaps_parser.add_argument("paths", nargs="*", help="Source files/dirs (default: configured source_roots)")
     overlaps_parser.add_argument("--threshold", type=float, default=0.55)
     overlaps_parser.add_argument("--top", type=int, default=50, help="Keep the top N pairs (0 = all)")
     overlaps_parser.add_argument("--min-tokens", type=int, default=40)

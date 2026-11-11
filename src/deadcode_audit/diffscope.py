@@ -65,20 +65,25 @@ def is_runtime_python_path(path: Path) -> bool:
     return path.suffix == ".py" and any(path.is_relative_to(root) for root in source_roots()) and not is_test_path(path)
 
 
-def changed_python_files(compare_branch: str) -> list[Path]:
-    """Return changed tracked Python files relative to the compare branch."""
+def changed_files(compare_branch: str, *, suffixes: frozenset[str]) -> list[Path]:
+    """Return changed tracked sources with the requested syntax suffixes."""
     compare_ref = _resolve_compare_ref(compare_branch)
     merge_base = _git_output("merge-base", "HEAD", compare_ref)
     diff_output = _git_output("diff", "--name-only", "--diff-filter=ACMR", f"{merge_base}..HEAD")
     files: list[Path] = []
     for line in diff_output.splitlines():
         path = Path(line)
-        if path.suffix != ".py":
+        if path.suffix not in suffixes:
             continue
         if not (REPO_ROOT / path).exists():
             continue
         files.append(path)
     return files
+
+
+def changed_python_files(compare_branch: str) -> list[Path]:
+    """Return changed tracked Python files relative to the compare branch."""
+    return changed_files(compare_branch, suffixes=frozenset({".py"}))
 
 
 def changed_src_python_files(compare_branch: str) -> list[Path]:
@@ -135,16 +140,16 @@ def is_test_path(path: Path) -> bool:
     return any(path.is_relative_to(root) for root in project_paths("test_roots", [Path("tests")])) or "tests" in path.parts or path.name.startswith("test_")
 
 
-def runtime_files() -> list[Path]:
+def runtime_files(*, suffixes: frozenset[str] = frozenset({".py"})) -> list[Path]:
     excluded = {".git", ".venv", "venv", ".runtime", "node_modules", "__pycache__", "mutants"}
     result = set()
     for root in source_roots():
         full = REPO_ROOT / root
         if not full.exists():
             raise ValueError(f"Configured source root does not exist: {root}")
-        paths = [full] if full.is_file() else full.rglob("*.py")
+        paths = [full] if full.is_file() else full.rglob("*")
         for path in paths:
             rel = path.relative_to(REPO_ROOT)
-            if not (set(rel.parts) & excluded) and is_runtime_python_path(rel):
+            if path.is_file() and path.suffix in suffixes and not (set(rel.parts) & excluded) and not is_test_path(rel):
                 result.add(rel)
     return sorted(result)

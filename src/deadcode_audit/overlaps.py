@@ -1,7 +1,8 @@
 """On-demand, advisory function-overlap audit: full all-pairs, ranked, semantic.
 
-Every function in ``src/`` is compared against every other (upper-triangle, so each pair once). Each
-pair gets a hybrid score = embedding cosine + structural token similarity + API-name Jaccard, ranked
+Eligible functions are compared as upper-triangle candidates, except strict same-file JS/TS
+ancestor/descendant source-span pairs; every remaining pair is scored once. Each pair gets a hybrid
+score = embedding cosine + structural token similarity + API-name Jaccard, ranked
 most-similar first; a function overlapping several others appears in every one of its pairs (not
 best-match-only). The embedder is dependency-INJECTED (``overlap_embed.get_embedder``), so this module
 imports without torch/numpy and tests pass a fake embedder; when the embedder is absent the score
@@ -15,12 +16,14 @@ pre-filter is inlined (with an embed-inclusive ceiling) so a passing pair is nev
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import clones, diffscope
+from deadcode_audit import clones, config, diffscope, javascript, scan
 
 if TYPE_CHECKING:
     import numpy as np
@@ -35,6 +38,7 @@ _W_STRUCT_DET, _W_API_DET = 0.6, 0.4
 # API-surface Jaccard gate; lower than clones' 0.6 for recall. (CLI flag defaults — threshold 0.55,
 # top 50, min-tokens 40, model — are the single source in cli.py's argparse; run() takes them explicitly.)
 _SEMANTIC_THRESHOLD = 0.3
+_JS_FUNCTION_LANGUAGES = frozenset({"javascript", "typescript"})
 
 
 @dataclass(frozen=True)
@@ -59,12 +63,27 @@ class OverlapPair:
     struct: float
     api: float
     embed: float | None
+    a_input: dict | None = None
+    b_input: dict | None = None
 
 
-def build_corpus() -> list[_SourcedFunc]:
+def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     """Collect every src function with its fingerprint tokens AND source segment, in one parse pass."""
     funcs: list[_SourcedFunc] = []
-    for path in diffscope.all_src_files():
+    if paths:
+        selected = scan.resolve_target_files(paths, changed=False, compare_branch="main",
+                                             exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+    else:
+        python = diffscope.all_src_files()
+        candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
+                                               exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+        selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
+    for path in selected:
+        if path.suffix in javascript.SUFFIXES:
+            from deadcode_audit.javascript_functions import collect_functions
+            source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
+            funcs.extend(_SourcedFunc(record, text) for record, text in collect_functions(source, path))
+            continue
         source = diffscope.read_text(path)
         tree = ast.parse(source)
         for node in ast.walk(tree):
@@ -74,6 +93,43 @@ def build_corpus() -> list[_SourcedFunc]:
                 # Fail-open: a None segment (rare, position-less node) -> "" -> deterministic-only for this fn.
                 funcs.append(_SourcedFunc(record=record, source=ast.get_source_segment(source, node) or ""))
     return funcs
+
+
+def _input_identity(function: _SourcedFunc) -> dict:
+    record = function.record
+    raw = function.source.encode("utf-8")
+    result = {"file": record.file_path.as_posix(), "line": record.line, "symbol": record.symbol,
+              "language": record.language, "source_bytes": len(raw), "source_sha256": hashlib.sha256(raw).hexdigest()}
+    if record.language != "python":
+        result.update(column=record.column, start_byte=record.start_byte, end_byte=record.end_byte)
+    return result
+
+
+def _strict_same_file_js_containment(first: clones._FuncRecord, second: clones._FuncRecord) -> bool:
+    """Return whether two valid JS/TS source spans strictly contain one another."""
+    if first.language not in _JS_FUNCTION_LANGUAGES or second.language not in _JS_FUNCTION_LANGUAGES:
+        return False
+    if first.file_path != second.file_path:
+        return False
+    spans = (first.start_byte, first.end_byte, second.start_byte, second.end_byte)
+    if any(type(offset) is not int for offset in spans):
+        return False
+    first_start, first_end, second_start, second_end = spans
+    if min(spans) < 0 or first_start >= first_end or second_start >= second_end:
+        return False
+    contained = (first_start <= second_start and second_end <= first_end) or (
+        second_start <= first_start and first_end <= second_end
+    )
+    return contained and spans[:2] != spans[2:]
+
+
+def _count_skipped_containment(funcs: list[_SourcedFunc], min_tokens: int) -> int:
+    survivors = [function for function in funcs if len(function.record.tokens) >= min_tokens]
+    return sum(
+        _strict_same_file_js_containment(survivors[i].record, survivors[j].record)
+        for i in range(len(survivors))
+        for j in range(i + 1, len(survivors))
+    )
 
 
 def _combined_with_embed(struct: float, api: float, embed: float) -> float:
@@ -92,7 +148,7 @@ def find_overlaps(
     embed_fn: EmbedFn | None,
     semantic_threshold: float = _SEMANTIC_THRESHOLD,
 ) -> list[OverlapPair]:
-    """Return ALL function pairs scoring >= ``threshold``, ranked descending (the injected-scoring core).
+    """Return ALL non-containment function pairs scoring >= ``threshold``, ranked descending.
 
     Pure: ``embed_fn`` is injected (None => deterministic-only), so this needs neither torch nor an
     import of numpy (the cosine matrix is the ndarray ``embed_fn`` returns).
@@ -107,6 +163,7 @@ def find_overlaps(
         matrix = vectors @ vectors.T  # cosine matrix; dot == cosine because rows are unit-norm
         embeddable = [bool(f.source.strip()) for f in survivors]
 
+    mixed_metadata = any(function.record.language != "python" for function in funcs)
     pairs: list[OverlapPair] = []
     for i in range(count):
         first = survivors[i]
@@ -114,6 +171,10 @@ def find_overlaps(
         for j in range(i + 1, count):
             second = survivors[j]
             tokens_j, sem_j = second.record.tokens, second.record.semantic
+            if _strict_same_file_js_containment(first.record, second.record):
+                continue
+            if first.record.language != second.record.language:
+                continue
 
             # Sound length pre-filter: skip only when the MAX possible combined score (other terms at
             # their ceiling of 1.0, struct at its SequenceMatcher upper bound 2*min/(a+b)) is below
@@ -154,6 +215,8 @@ def find_overlaps(
                     round(struct, 3),
                     round(api, 3),
                     round(embed, 3) if embed is not None else None,
+                    _input_identity(first) if mixed_metadata else None,
+                    _input_identity(second) if mixed_metadata else None,
                 )
             )
 
@@ -185,8 +248,8 @@ def _render_json(pairs: list[OverlapPair], *, embed_active: bool, threshold: flo
         "count": len(pairs),
         "pairs": [
             {
-                "a": {"file": p.a_file, "line": p.a_line, "symbol": p.a_symbol},
-                "b": {"file": p.b_file, "line": p.b_line, "symbol": p.b_symbol},
+                "a": p.a_input or {"file": p.a_file, "line": p.a_line, "symbol": p.a_symbol},
+                "b": p.b_input or {"file": p.b_file, "line": p.b_line, "symbol": p.b_symbol},
                 "combined": p.combined,
                 "struct": p.struct,
                 "api": p.api,
@@ -198,19 +261,20 @@ def _render_json(pairs: list[OverlapPair], *, embed_active: bool, threshold: flo
     return json.dumps(payload, indent=2)
 
 
-def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool) -> int:
+def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: str, as_json: bool,
+        paths: list[str] | None = None) -> int:
     """Build the corpus, run the all-pairs audit, render, and ALWAYS return 0 (advisory, never blocks)."""
+    corpus = build_corpus(paths)
+    if not corpus:
+        raise ValueError("No executable functions found in selected source roots")
+    eligible = sum(len(f.record.tokens) >= min_tokens for f in corpus)
+    if not eligible:
+        raise ValueError("No functions meet min_tokens; no comparisons performed")
     embed_fn: EmbedFn | None = None
     if not no_embed:
         from deadcode_audit import overlap_embed
 
         embed_fn = overlap_embed.get_embedder(model)
-    corpus = build_corpus()
-    if not corpus:
-        raise ValueError("No Python functions found in configured source roots")
-    eligible = sum(len(f.record.tokens) >= min_tokens for f in corpus)
-    if not eligible:
-        raise ValueError("No functions meet min_tokens; no comparisons performed")
     pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens, embed_fn=embed_fn)
     total_pairs = len(pairs)
     if top:
@@ -230,6 +294,20 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
         payload["min_tokens"] = min_tokens
         if embed_active:
             payload["embedding"] = overlap_embed.model_metadata()
+        if any(function.record.language != "python" for function in corpus):
+            payload["functions_by_language"] = dict(Counter(function.record.language for function in corpus))
+            payload["comparison_pools"] = "within-language; JavaScript and TypeScript share javascript"
+            payload["pairs_skipped_same_file_containment"] = _count_skipped_containment(corpus, min_tokens)
+            payload["function_inputs"] = [
+                {**_input_identity(function), "tokens": len(function.record.tokens),
+                 "eligible": len(function.record.tokens) >= min_tokens,
+                 "embedded": embed_active and len(function.record.tokens) >= min_tokens}
+                for function in corpus
+            ]
+            payload["embedded_by_language"] = dict(Counter(
+                function.record.language for function in corpus
+                if embed_active and len(function.record.tokens) >= min_tokens
+            ))
         rendered = json.dumps(payload, indent=2)
     print(rendered)
     return 0

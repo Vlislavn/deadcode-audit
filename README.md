@@ -1,7 +1,11 @@
 # deadcode-audit
 
-One Python package for quality, dead-code, import-cycle, duplication and mutation checks.
-Extracted from IVAI; the target repository supplies paths and policy, not scanner code.
+One Python package for Python dead-code, import-cycle, duplication and mutation checks,
+plus JavaScript/TypeScript quality through an optional pinned local Oxlint backend.
+The same `scan`/`ci` commands combine both languages. Function `overlaps` shares the existing
+embedding pipeline across Python and JS/TS; JS export reachability and mutation are not implemented. Extracted from IVAI; the target supplies paths and policy, not scanner code.
+
+[Changelog](CHANGELOG.md).
 
 ## Start here
 
@@ -58,10 +62,89 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds are configured in 
 | Mutation targets / execution | `deadcode mutation-targets --compare-branch main` / `deadcode run-mutmut-changed --compare-branch main` | Changed-code mutation gate |
 
 Diff checks compare committed HEAD against the merge base. They do not include unstaged work.
-Whole-tree scans include untracked Python source. Advisory exit 0 means the audit ran, not that the code is clean.
+Whole-tree quality scans include untracked supported source; Python-specific checks still select Python only. Advisory exit 0 means the audit ran, not that the code is clean.
 Parse errors, unavailable models and command failures are not a clean result.
 
+## JavaScript / TypeScript alongside Python
+
+Install the optional backend once in the **target** checkout (Node `^20.19.0` or `>=22.12.0`):
+
+```sh
+npm install --prefix .git/deadcode-js --ignore-scripts --no-audit --no-fund --save-exact oxlint@1.90.0
+export DEADCODE_OXLINT="$PWD/.git/deadcode-js/node_modules/.bin/oxlint"
+/path/to/deadcode-audit/.venv/bin/deadcode scan src scripts --json --no-history
+```
+
+Alternatively put that exact version of `oxlint` on PATH. Scans never install tools, invoke `npx`,
+fetch rules, execute input sources, load target JS plugins/configs, or auto-fix files.
+Missing/other backend versions, malformed replies, incomplete coverage and process failures refuse.
+The adapter accepts **1.90.0 only**: the upstream JSON protocol is not versioned.
+
+Use the existing `project.source_roots` for a default mixed scan; no second root configuration:
+
+```yaml
+project:
+  source_roots: [src, javascript]
+  test_roots: [tests]
+```
+
+Supported files: `.js`, `.cjs`, `.mjs`, `.jsx`, `.ts`, `.cts`, `.mts`, `.tsx` and Python.
+The JS quality slice reports unused local bindings/empty blocks as warnings, unreachable statements
+and syntax errors as errors. Host-invoked CommonJS exports are **not** declared dead. Markdown
+fences, unused-export graphs and JS mutation are outside this slice. Reachability, Vulture and
+mutation commands remain Python-only; the function-overlap audit below supports both languages.
+
+JS-containing JSON adds `coverage: {python: N, javascript_typescript: N}`; Python-only JSON,
+scores and `run_scan` behavior stay unchanged. Mixed scoring uses the existing aggregate formula,
+not a calibrated JS defect/removability percentage. Findings may need context and can overlap;
+never interpret a low score as proof that callbacks or fallback handling should be deleted.
+
+The backend is run on explicit batches of at most128files with two threads. The wall-clock
+safety cap is `DEADCODE_JS_SAFETY_SECONDS` (default60, maximum120seconds per batch);
+missing/invalid budgets refuse. Responses above8MiB are rejected after capture—this is not
+an OS allocation sandbox. `DEADCODE_OXLINT` is a single executable, not shell arguments.
+Run real optional backend tests with `DEADCODE_TEST_OXLINT="$DEADCODE_OXLINT" uv run --no-sync pytest -q`.
+See [backend contract and primary-source decisions](docs/JAVASCRIPT.md).
+
 ## Embeddings
+
+```text
+Python AST --------------------+
+JS/TS Tree-sitter functions ----+-> existing CodeBERT -> same overlap scoring/report
+                                  Python and JS/TS are separate comparison pools
+```
+
+For JS/TS function embeddings, install the parser and embedding extras **together** (no Oxlint required):
+
+```sh
+uv sync --all-extras
+# From the target checkout; paths are optional, like scan:
+/path/to/deadcode-audit/.venv/bin/deadcode overlaps src javascript --json --top 0
+```
+
+The frontend imports official local Tree-sitter grammars, not a regex function extractor. It handles
+declarations, async/generator functions, arrows, function expressions, class/object methods, nested
+callbacks and CommonJS assignments. Whole-file syntax errors refuse analysis before model loading;
+source is never executed. The parser is pinned to `tree-sitter==0.25.2`: published0.26.0 has an
+upstream `Point.row` reference-count corruption defect that reproduced as SIGBUS here. A runtime
+version check rejects that unsafe override; the actual same-corpus counterfactual and upstream fix
+are recorded in [backend evidence](docs/JAVASCRIPT.md#parser-compatibility).
+
+The same encoder, `--model`, weights, `--min-tokens`, `--threshold`, `--top` and `--no-embed` options
+work for JS/TS. JavaScript and TypeScript compare together; Python↔JS structural/API scores are not
+calibrated, so cross-language pairs are intentionally not emitted. One report can include both pools.
+Python-only report shape/scores remain unchanged. JS-containing JSON additionally identifies each
+function's language, exact source hash/bytes/byte span, eligibility and embedding status, with per-language
+counts. Two same-line anonymous functions retain distinct identities.
+
+Historical pre-containment-filter CPU CodeBERT verification: 49 JS files yielded 425 functions;
+314 met default `--min-tokens 40` and were actually embedded, producing 1743 candidate pairs before
+the same-file ancestor/descendant filter. A mixed run embedded 487 functions (173 Python + 314 JS/TS).
+The original Python report (173 embeddings / 292 pairs) remained byte-identical. No post-filter
+real-data pair count is asserted here. These are execution/coverage numbers, not precision, semantic
+equivalence or removal permission.
+The111small JS functions are explicitly ineligible at the default threshold; use `--min-tokens 1`
+when intentionally including small functions.
 
 ```sh
 # In this checkout; installs the model runtime, not model weights.
@@ -77,6 +160,8 @@ The JSON records model revision, functions scanned/embedded, pooling, truncation
 `--min-tokens` filters small functions; `--top 0` prints all matching pairs.
 Cosine similarity is a heuristic for inspection, not proof of semantic equivalence or permission to delete code.
 The comparison combines cosine, normalized syntax and API-name overlap; the API filter can miss semantic matches.
+JS local/parameter bindings are abstracted while free APIs, property names and operators are retained.
+Identical snippets and injected-vector tests are trivial wiring floors, not evidence of real-data accuracy.
 Memory grows quadratically with eligible function count. Supervise large runs and set process limits on your host.
 
 ## Mutation and validation

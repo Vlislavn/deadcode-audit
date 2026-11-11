@@ -1,0 +1,335 @@
+{
+  "status": "implemented-verified-independent-technical-review-accepted",
+  "canonical_base_head_not_new_commit": "26ef90e3da571b6537bb40d1b15c13103c7c51e0",
+  "uncommitted_implementation_snapshot_sha256": "f64a7f5a4c84711b30621070e54b0ad8cb01eb95e94d28f8916e3cbcd7f75884",
+  "source_snapshot_excludes_this_evidence_file": [
+    {
+      "path": ".github/workflows/checks.yml",
+      "bytes": 723,
+      "sha256": "788d229b8567fef481e9895aa1945c994ee4e3ed2134ec01b44e19cc50f91cdd"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 376,
+      "sha256": "3a70c0b71bbd22afc89ec09540f722b28a58062ad93e8ec783bad99173d8737e"
+    },
+    {
+      "path": "README.md",
+      "bytes": 12653,
+      "sha256": "df04315708890a7a28ea1c086a94adab6b1bf274f676c8a3b7be3c49cfba8287"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "bytes": 1979,
+      "sha256": "8987bb24864e821146b5a4a47221a36db043b9fea25f1cbe4b5a195d435e6f31"
+    },
+    {
+      "path": "docs/JAVASCRIPT.md",
+      "bytes": 10130,
+      "sha256": "809306c11a10755913d8957ed198e83a740538ea74abf7caae35e566068101ca"
+    },
+    {
+      "path": "pyproject.toml",
+      "bytes": 838,
+      "sha256": "72ddf3c962cebf6bfa60811edd9c737490015fd7b4eeb4a371fd032b10862c81"
+    },
+    {
+      "path": "src/deadcode_audit/cli.py",
+      "bytes": 12664,
+      "sha256": "a85a88f2dc05cce5f0ab83d877e351b6a50be4917413dae21e9ddf4bbe935612"
+    },
+    {
+      "path": "src/deadcode_audit/clones.py",
+      "bytes": 7454,
+      "sha256": "2529ed4078e75ad67ec22c90798ad6a63c9e6677e5207595359ddc4b1a25f0af"
+    },
+    {
+      "path": "src/deadcode_audit/diffscope.py",
+      "bytes": 6189,
+      "sha256": "75b143c28f261583180132e5be9e5a059fecf174af2cc9ee9617765479ea429a"
+    },
+    {
+      "path": "src/deadcode_audit/javascript.py",
+      "bytes": 8579,
+      "sha256": "59ff1c10a953a2b60b09ab1ca0801d04da5d8656b30bdebad94d17e9ce7b9cf8"
+    },
+    {
+      "path": "src/deadcode_audit/javascript_functions.py",
+      "bytes": 19324,
+      "sha256": "01552bf236ed812a87809b545528c724fd976756126eababeb2e7fdb093d684e"
+    },
+    {
+      "path": "src/deadcode_audit/output.py",
+      "bytes": 5775,
+      "sha256": "d53d92781ed84dc0b5b4d198073e937bc9af76ccc508eb18002069fb13ec54e9"
+    },
+    {
+      "path": "src/deadcode_audit/overlaps.py",
+      "bytes": 12524,
+      "sha256": "ffd4d275fd7a48df407539cdf9af51dd683c156755d95c7c4628af3b2a2d7bf5"
+    },
+    {
+      "path": "src/deadcode_audit/scan.py",
+      "bytes": 4472,
+      "sha256": "fa4f4806bd18cdd18a74fa41feaa570ff92848985506f0b9c0dd9be07b48f14c"
+    },
+    {
+      "path": "tests/test_javascript.py",
+      "bytes": 12684,
+      "sha256": "2127648439796309b71dc93f422e16d6b5edf7e1b6cfcffb4d294bd2e239dec0"
+    },
+    {
+      "path": "tests/test_javascript_functions.py",
+      "bytes": 9571,
+      "sha256": "923b8c736bf6ef77b6963922fb60bf8b5285c1ba96e41c3de135a9de61b1b055"
+    },
+    {
+      "path": "tests/test_javascript_overlaps.py",
+      "bytes": 7444,
+      "sha256": "a25c9936297ed594cf7d8eed37e7e856a81d444135abdb5d1577cadba32d274f"
+    },
+    {
+      "path": "uv.lock",
+      "bytes": 339666,
+      "sha256": "1f66d79ac1d5d73b1dea55d84239689bf4f73b55a99a137562b8f2d202f50111"
+    }
+  ],
+  "baseline_tests": 450,
+  "current_tests": 514,
+  "required_lint": {
+    "command": "uv run --no-sync ruff check --select E9,F src tests",
+    "exit": 0,
+    "unrestricted_ruff_claimed_green": false,
+    "unrestricted_ruff_limit": "Broader rules still flag existing modules and new adapter ValueError protocol-validation exception-style preferences; no claim that unrestricted lint passed."
+  },
+  "wheel": {
+    "sha256": "8553375c1f019477caf6c63532ed471b77988606f26888b04f3ee2c537002395",
+    "python_source_modules_verified_byte_exact": 34,
+    "fresh_isolated_environment_mixed_scan_and_js_noembed_function_overlaps_passed": true
+  },
+  "real_source_measurements": {
+    "baseline_python_actual_files": 16,
+    "python_output_before_after_exactly_equal": true,
+    "javascript_actual_files": 49,
+    "mixed_actual_files": 65,
+    "mixed_coverage": {
+      "python": 16,
+      "javascript_typescript": 49
+    },
+    "javascript_summary": {
+      "errors": 0,
+      "warnings": 61,
+      "info": 0,
+      "files": 23,
+      "total": 61
+    },
+    "javascript_aggregate_score_not_calibrated": 23,
+    "javascript_ci_returncode_0_is_not_clean_claim": true,
+    "satellite_49product_script_hashes_unchanged": true,
+    "commands": {
+      "original-python-real": {
+        "argv": [
+          "<deadcode-audit>/.venv/bin/python",
+          "-m",
+          "deadcode_audit",
+          "scan",
+          "src",
+          "--json",
+          "--no-history"
+        ],
+        "DEADCODE_REPO_ROOT": "<consumer>",
+        "implementation": "canonical-original-26ef90e",
+        "returncode": 0,
+        "stdout_sha256": "e46a319fc30b44c8d63d70915bd45fba859094ce110002e7f1072ffdc47cfe59"
+      },
+      "new-python-real": {
+        "argv": [
+          "<deadcode-audit>/.venv/bin/python",
+          "-m",
+          "deadcode_audit",
+          "scan",
+          "src",
+          "--json",
+          "--no-history"
+        ],
+        "DEADCODE_REPO_ROOT": "<consumer>",
+        "implementation": "current-uncommitted-canonical",
+        "returncode": 0,
+        "stdout_sha256": "e46a319fc30b44c8d63d70915bd45fba859094ce110002e7f1072ffdc47cfe59"
+      },
+      "real-mixed": {
+        "argv": [
+          "<deadcode-audit>/.venv/bin/python",
+          "-m",
+          "deadcode_audit",
+          "scan",
+          "src",
+          "vault/99_Archive/templates/scripts",
+          "--json",
+          "--no-history"
+        ],
+        "DEADCODE_REPO_ROOT": "<consumer>",
+        "implementation": "current-uncommitted-canonical",
+        "returncode": 0,
+        "stdout_sha256": "126c52aea48f5339bfa6b5cda20073ad7698bce1cc2dffbb95f505f04d0db587"
+      },
+      "real-js-ci": {
+        "argv": [
+          "<deadcode-audit>/.venv/bin/python",
+          "-m",
+          "deadcode_audit",
+          "ci",
+          "vault/99_Archive/templates/scripts",
+          "--json"
+        ],
+        "DEADCODE_REPO_ROOT": "<consumer>",
+        "implementation": "current-uncommitted-canonical",
+        "returncode": 0,
+        "stdout_sha256": "327dc48982848647deb3ffc5b9178a4389a7c677ee1fc33a98310e99db3183c3"
+      }
+    },
+    "no_live_vault_model_or_upstream_reference_execution": true
+  },
+  "real_embedding_validation": {
+    "status": "VERIFIED_REAL_JS_AND_MIXED_FUNCTION_EMBEDDINGS",
+    "python_baseline_report_byte_identical": true,
+    "python_embeddings_unchanged": 173,
+    "python_pairs_unchanged": 292,
+    "mixed_python_pairs_after_stripping_only_new_metadata_equal_original": true,
+    "real_model_runs": {
+      "deadcode-js49-real-embeddings-final-v2": {
+        "functions_scanned": 425,
+        "functions_embedded": 314,
+        "embedded_by_language": {
+          "javascript": 314
+        },
+        "pairs": 1743,
+        "embedding": {
+          "model": "microsoft/codebert-base",
+          "revision": "3b0952feddeffad0063f274080e3c23d75e7eb39",
+          "device": "cpu",
+          "max_tokens": 512,
+          "pooling": "attention-masked mean, L2 normalization"
+        },
+        "actual_source_identities_verified": 425,
+        "unique_javascript_files": 49,
+        "raw_output_sha256": "2f540a7313b325cb4f0ff82ae96b2d8b55a7b34a6fabe4807f2b4f69f5f7a000",
+        "elapsed_s": 56.2,
+        "sampled_peak_rss_mb": 927.4,
+        "maximum_swap_growth_mb": 467.8,
+        "minimum_free_percent": 26.0
+      },
+      "deadcode-mixed-real-embeddings-final-v2": {
+        "functions_scanned": 617,
+        "functions_embedded": 487,
+        "embedded_by_language": {
+          "python": 173,
+          "javascript": 314
+        },
+        "pairs": 2035,
+        "embedding": {
+          "model": "microsoft/codebert-base",
+          "revision": "3b0952feddeffad0063f274080e3c23d75e7eb39",
+          "device": "cpu",
+          "max_tokens": 512,
+          "pooling": "attention-masked mean, L2 normalization"
+        },
+        "actual_source_identities_verified": 617,
+        "unique_javascript_files": 49,
+        "raw_output_sha256": "3d3744ca7648950b00d020df16ebb59602dbdd4afbe26d7531fcc43730c991db",
+        "elapsed_s": 61.2,
+        "sampled_peak_rss_mb": 839.7,
+        "maximum_swap_growth_mb": 351.2,
+        "minimum_free_percent": 26.0
+      }
+    },
+    "isolated_built_wheel_mixed_scan_and_js_function_overlaps": true,
+    "satellite49script_bytes_unchanged": true,
+    "semantic_precision_or_safe_deletion_claim": false,
+    "raw_artifacts_private": true
+  },
+  "technical_reviews": [
+    {
+      "zone": "FINAL_AST",
+      "verdict_semantically_adjudicated_by_main_agent_not_keyword_parser": "changes-requested-before-correction",
+      "model": "gpt-6-luna",
+      "session": "01a17ef2-acdd-70cb-84c3-ff62751d1bfd",
+      "answer_sha256": "df0502b816fc35bbf7b6dcc5e842470df786f268eb5e80fb9b6549402279e370",
+      "answer_verbatim": "**CHANGES_REQUESTED**\n\n- **Required \u2014 `src/deadcode_audit/javascript_functions.py:163-168, 297-308`**: `var` bindings always climb to the nearest function scope, but JavaScript class static initialization blocks are their own `var` scope. The current scope model does not preserve that boundary. For example, inside a function containing `class C { static { var fetch = 1; } }`, a later `fetch()` should remain a free API reference; this code resolves it as local. Replacing `fetch` with `request` can therefore produce identical fingerprints and erase the API distinction. Model the static-block `var` boundary and add a regression test asserting those references remain distinct; adding the node only as a lexical block is insufficient while `var` still climbs to the function scope.\n\nThe reviewed grammar-based extraction, source-span handling, parse-failure behavior, generator/method binding cases, and parser-version guard otherwise look sound. I did not run tests or models.",
+      "source_only_not_owner_acceptance": true
+    },
+    {
+      "zone": "FINAL_PIPELINE",
+      "verdict_semantically_adjudicated_by_main_agent_not_keyword_parser": "accepted-no-required-changes",
+      "model": "gpt-6-luna",
+      "session": "01a17ef2-acf0-77f6-a7fa-a24e0b4f1b8c",
+      "answer_sha256": "361d53174da69c9ac9d3ab876f0311f8c63768ca2b0f0163bf68919d88e836ad",
+      "answer_verbatim": "**ACCEPTED \u2014 no required changes.**\n\nThe scan/CI integration reuses the existing `Diagnostic`, severity overrides, scoring, and output path; the Oxlint adapter pins the protocol and fails closed on missing or invalid backend responses (`src/deadcode_audit/javascript.py:27-48,176-260`; `src/deadcode_audit/scan.py:99-107`). Optional extras keep the parser and model dependencies out of the base install.\n\nThe embedding requirement is met: I inspected the raw JS and mixed reports, not just the summary. They show **425 JS functions, 314 actually embedded, 1,743 candidate pairs**; mixed input shows **617 functions, 487 embedded (173 Python + 314 JS), 2,035 pairs**, with CodeBERT revision and per-function source hashes/spans. The original Python report remains byte-identical. The 111 JS functions below the default token threshold are explicitly ineligible\u2014not implied coverage. These are overlap candidates, not accuracy evidence or deletion permission (`src/deadcode-audit/docs/JAVASCRIPT.md:86-100`).\n\nThe quality findings are appropriately framed: 39 unused-binding warnings include catch parameters; 22 empty-block warnings can reflect intentional fallback/error handling. They are not 61 confirmed dead-code defects. Unknown dynamic consumers and exports are not classified as dead.\n\n**Nonblocking follow-up:** `src/deadcode_audit/overlaps.py:75-78` applies configured excludes to default-discovered JS files but not Python files. This preserves prior Python behavior; clarify whether `exclude` is intended to filter default overlap corpora.\n\nRead-only review; I did not run tests.",
+      "source_only_not_owner_acceptance": true
+    },
+    {
+      "zone": "STATIC_CORRECTION",
+      "verdict_semantically_adjudicated_by_main_agent_not_keyword_parser": "accepted-no-required-changes",
+      "model": "gpt-6-luna",
+      "session": "01a17eff-0900-7750-9e4b-9b2c79bd394a",
+      "answer_sha256": "08099afa749e85b3ac5ff6583320945d0e1785ca75aedb072b46522b9d52a148",
+      "answer_verbatim": "**ACCEPTED \u2014 no required changes.**\n\n`src/deadcode_audit/javascript_functions.py:163-166,244-246,308` correctly makes a class static block its own `var` scope: `var_scope` stops at `static` as well as `function`, and the grammar node creates that scope. Ordinary block scopes still climb to the enclosing function. This matches the static-block semantics in the retained MDN and ESLint sources.\n\nThe JS/TS regression at `tests/test_javascript_functions.py:201-213` asserts that outer `fetch` and `request` remain distinct free references, while ordinary-block `var` hoisting remains intact. These are deterministic IR contracts, not language-grading evidence; I did not run tests or models.\n\nI found no additional blocker in the reviewed pipeline path. The prior exclusion clarification is now explicit in `docs/JAVASCRIPT.md:78-80` and matches `src/deadcode_audit/overlaps.py:71-78`: explicit targets exclude both languages, default JS honors excludes, and default Python retains historical behavior. Read-only review; no edits or execution.",
+      "source_only_not_owner_acceptance": true
+    }
+  ],
+  "parser_pin": "tree-sitter==0.25.2",
+  "quality_backend_pin": "oxlint==1.90.0",
+  "corrections": {
+    "parser_native_corruption": {
+      "unsafe_026_repeated_exit": -10,
+      "isolated_025_same_command_exit": 0,
+      "actual_js_embeddings": 314,
+      "model_changed": false,
+      "budget_raised": false,
+      "primary_fix": "https://github.com/tree-sitter/py-tree-sitter/commit/afb3836bda1afd853d210468c94d257ade93e814"
+    },
+    "class_static_block_var_scope": {
+      "actual_js_and_ts_regressions_red_before_fix": true,
+      "fixed_with_existing_scope_primitive": true,
+      "ordinary_var_hoisting_preserved": true,
+      "independent_followup_accepted": true
+    }
+  },
+  "reused_sources": [
+    {
+      "name": "oxlint",
+      "version": "1.90.0",
+      "license": "MIT",
+      "source": "https://github.com/oxc-project/oxc/tree/9b6fff42fa6edf0bec55861b6f0764c7b9acd86b"
+    },
+    {
+      "name": "tree-sitter",
+      "version": "0.25.2",
+      "license": "MIT",
+      "source": "https://github.com/tree-sitter/py-tree-sitter/tree/v0.25.2"
+    },
+    {
+      "name": "tree-sitter-javascript",
+      "version": "0.25.0",
+      "license": "MIT",
+      "source": "https://github.com/tree-sitter/tree-sitter-javascript/tree/v0.25.0"
+    },
+    {
+      "name": "tree-sitter-typescript",
+      "version": "0.23.2",
+      "license": "MIT",
+      "source": "https://github.com/tree-sitter/tree-sitter-typescript/tree/v0.23.2"
+    }
+  ],
+  "limits": {
+    "live_vault_or_settings_changed": false,
+    "consumer_git_pin_changed": false,
+    "consumer_regular_make_deadcode_claimed_green": false,
+    "unrelated_idle_preparation_sha_wrapper_failure_repaired": false,
+    "remote_ci_claimed_green": false,
+    "semantic_accuracy_or_safe_deletion_claim": false,
+    "model_api_keys_required": false,
+    "cross_python_js_comparison_claim": false,
+    "committed_or_published": false
+  }
+}
