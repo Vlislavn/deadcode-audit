@@ -215,6 +215,15 @@ def _cmd_reachability_scan(args: argparse.Namespace) -> int:
     return reachability_scan.run(top=args.top, as_json=args.json)
 
 
+def _cmd_growth(args: argparse.Namespace) -> int:
+    import json
+    from deadcode_audit import growth
+
+    report = growth.compare(args.base, args.head, args.paths or None)
+    print(json.dumps(report, indent=2) if args.json else growth.render(report))
+    return 0
+
+
 def _cmd_cycles(args: argparse.Namespace) -> int:
     from deadcode_audit import cycles
 
@@ -237,6 +246,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "overlaps": _cmd_overlaps,
     "reachability-scan": _cmd_reachability_scan,
     "cycles": _cmd_cycles,
+    "growth": _cmd_growth,
 }
 
 
@@ -317,6 +327,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     trend_parser = subparsers.add_parser("trend", help="Show score history")
     trend_parser.add_argument("--limit", type=int, default=20, help="Max records to show (0 = all)")
+
+    growth_parser = subparsers.add_parser("growth", help="Size/churn facts between commits, without a bloat threshold")
+    growth_parser.add_argument("--base", required=True, help="Exact base commit (not the merge base)")
+    growth_parser.add_argument("--head", default="HEAD", help="Exact head commit (default: HEAD)")
+    growth_parser.add_argument("paths", nargs="*", help="Limit to these changed Python files (tests excluded)")
+    growth_parser.add_argument("--json", action="store_true", help="Counts, deltas, churn and per-file coverage")
 
     # On-demand, advisory: full all-pairs semantic overlap audit (whole tree, NOT diff-scoped).
     overlaps_parser = subparsers.add_parser(

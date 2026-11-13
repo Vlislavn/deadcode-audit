@@ -45,13 +45,16 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory |
 | Import cycles | `deadcode cycles [--advisory] --json` |
+| Size and churn | `deadcode growth --base BASE [--head HEAD] [--json] [files...]` — changed non-test Python files, exact commits; no bloat threshold |
 | Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |
 | Mutation gate | `deadcode mutation-targets`, `deadcode run-mutmut-changed` — `--compare-branch main` |
 | Helpers | `deadcode rules`, `trend`, `changed-python-files`, `mypy-targets` — `--null` for machine output |
 
 Advisory exit 0 means the audit ran, not that the code is clean; parse errors and command failures are not a clean result.
-Diff checks compare committed HEAD against the merge base; whole-tree scans include untracked supported source (Python-specific checks still select Python only). Mutation selection skips only strict AST-equivalent changes (such as comments), reports that no-op explicitly, and still selects added or behaviorally changed files.
+`growth` reports physical lines (including blanks/comments), functions (including methods/nested/async), classes, import instructions and short function bodies (≤5 lines after an initial docstring). Net change and churn are separate. Syntax errors make AST counts `null`/unknown with file locators, never zero; excluded files and binary churn are explicit. It does not execute source, load a model or alter history. It measures size, not necessity.
+
+Other diff checks compare committed HEAD against the merge base; whole-tree scans include untracked supported source (Python-specific checks still select Python only). Mutation selection skips only strict AST-equivalent changes (such as comments), reports that no-op explicitly, and still selects added or behaviorally changed files.
 
 ## JavaScript / TypeScript
 

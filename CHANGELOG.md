@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `growth --base BASE --head HEAD`: size and churn of changed non-test Python files, ported from agent-skills. JSON includes counts, deltas, exclusions and AST-unknown locators. No model, checkout, score change or new blocking threshold.
 - Mixed Python/JS/TS scan/CI and function overlaps with exact source identities (`javascript` extra; Oxlint 1.90.0, Tree-sitter 0.25.2 pinned to avoid reproduced 0.26.0 native corruption). Python-only results unchanged; no JS dead-export/Markdown/mutation claim.
 - Overlaps skip strict same-file JS/TS ancestor/descendant source-span pairs and compare within one language pool; siblings, cross-file pairs and embedding inputs are kept.
 

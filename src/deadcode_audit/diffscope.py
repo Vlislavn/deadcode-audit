@@ -23,7 +23,7 @@ REPO_ROOT: Path = Path(_env_root).resolve() if _env_root else Path.cwd().resolve
 _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
 
-def _git_output(*args: str) -> str:
+def _git_output(*args: str, strip: bool = True) -> str:
     """Return stdout for a git command executed from the repository root.
 
     Output is decoded as UTF-8 with replacement (``text=True`` alone would use the locale
@@ -45,7 +45,12 @@ def _git_output(*args: str) -> str:
             f"git {' '.join(args)} failed with exit code {completed.returncode}: "
             f"{completed.stderr.strip()}"
         )
-    return completed.stdout.strip()
+    return completed.stdout.strip() if strip else completed.stdout
+
+
+def git_output(*args: str) -> str:
+    """Read raw git output, preserving blob whitespace and NUL-delimited paths."""
+    return _git_output(*args, strip=False)
 
 
 def git_lines(*args: str) -> list[str]:
