@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,6 +20,8 @@ _PINNED_REMOTE = {
 _MODEL: tuple[str, Any, Any] | None = None
 _BATCH = 4
 _MAX_TOKENS = 512
+_ALGO_VERSION = 1  # bump when pooling/normalisation/input preparation below changes
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 def get_embedder(model_id: str) -> Callable[[list[str]], np.ndarray]:
@@ -25,10 +30,12 @@ def get_embedder(model_id: str) -> Callable[[list[str]], np.ndarray]:
     import torch
     from transformers import AutoModel, AutoTokenizer
 
+    from deadcode_audit import embed_cache
+
     torch.set_num_threads(2)
+    revision = _PINNED_REMOTE.get(model_id)
     if _MODEL is None or _MODEL[0] != model_id:
         _MODEL = None
-        revision = _PINNED_REMOTE.get(model_id)
         remote = revision is not None
         if model_id.startswith("codesage/"):  # pinned remote code predates transformers>=4.50 Conv1D move
             import transformers.modeling_utils as modeling_utils
@@ -58,7 +65,31 @@ def get_embedder(model_id: str) -> Callable[[list[str]], np.ndarray]:
             rows.append(normed.cpu().numpy())
         return np.vstack(rows) if rows else np.empty((0, model.config.hidden_size), dtype=np.float32)
 
-    return embed
+    return embed_cache.cached(embed, _identity(model_id, revision, tokenizer, model), model.config.hidden_size)
+
+
+def _identity(model_id: str, revision: str | None, tokenizer: Any, model: Any) -> dict[str, Any] | None:
+    """Everything that can change a vector, or ``None`` when the model/tokenizer cannot be pinned to a commit."""
+    model_commit = getattr(model.config, "_commit_hash", None)
+    if revision is not None:  # pinned remote id: valid only if the loaded model really is that commit
+        tokenizer_commit = revision if model_commit == revision else None
+    else:
+        tokenizer_commit = getattr(tokenizer, "init_kwargs", {}).get("_commit_hash")
+    for commit in (model_commit, tokenizer_commit):
+        if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+            return None
+    try:
+        versions = {name: metadata.version(name) for name in ("torch", "transformers", "numpy")}
+    except metadata.PackageNotFoundError:
+        return None
+    return {
+        "algo": _ALGO_VERSION, "model": model_id, "model_commit": model_commit, "tokenizer_commit": tokenizer_commit,
+        "tokenizer": [type(tokenizer).__name__, getattr(tokenizer, "eos_token", None),
+                      getattr(tokenizer, "eos_token_id", None), getattr(tokenizer, "add_eos_token", None)],
+        "config": hashlib.sha256(model.config.to_json_string().encode()).hexdigest(),
+        "max_tokens": _MAX_TOKENS, "batch": _BATCH, "pooling": "attention-masked mean, L2 normalization",
+        "libraries": versions,
+    }
 
 
 def model_metadata() -> dict[str, Any]:
