@@ -224,6 +224,12 @@ def _cmd_growth(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stub_sensitivity(args: argparse.Namespace) -> int:
+    from deadcode_audit import stub_sensitivity
+
+    return stub_sensitivity.run(args.paths, args.compare_branch, as_json=args.json)
+
+
 def _cmd_cycles(args: argparse.Namespace) -> int:
     from deadcode_audit import cycles
 
@@ -247,6 +253,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "reachability-scan": _cmd_reachability_scan,
     "cycles": _cmd_cycles,
     "growth": _cmd_growth,
+    "stub-sensitivity": _cmd_stub_sensitivity,
 }
 
 
@@ -379,6 +386,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Report only, always exit 0",
     )
     cycles_parser.add_argument("--json", action="store_true", help="JSON output")
+
+    stub_parser = _with_compare(
+        "stub-sensitivity",
+        "Stub each function body; report functions no test notices (advisory)",
+    )
+    stub_parser.add_argument("paths", nargs="*", help="Files to audit (default: changed runtime files vs --compare-branch)")
+    stub_parser.add_argument("--json", action="store_true", help="JSON output")
 
     return parser
 

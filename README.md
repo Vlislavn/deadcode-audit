@@ -49,6 +49,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |
 | Mutation gate | `deadcode mutation-targets`, `deadcode run-mutmut-changed` — `--compare-branch main` |
+| Pseudo-tested functions | `deadcode stub-sensitivity [paths...] [--json]` — advisory: stubs each function body in a scratch copy and lists functions no covering test notices; leads, not proof; detection depends on test timeouts; red baseline exits 2 |
 | Helpers | `deadcode rules`, `trend`, `changed-python-files`, `mypy-targets` — `--null` for machine output |
 
 Advisory exit 0 means the audit ran, not that the code is clean; parse errors and command failures are not a clean result.
