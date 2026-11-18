@@ -34,7 +34,7 @@ _cov = None
 
 def pytest_configure(config):
     global _cov
-    _cov = coverage.Coverage(data_file=os.environ["STUB_COV_DATA"], source=[os.environ["STUB_COV_SOURCE"]])
+    _cov = coverage.Coverage(config_file=False, data_file=os.environ["STUB_COV_DATA"], source=[os.environ["STUB_COV_SOURCE"]])
     _cov.start()
 
 
@@ -46,6 +46,9 @@ def pytest_unconfigure(config):
     _cov.stop()
     _cov.save()
 '''
+
+
+_MAX_ARGV_CHARS = 100_000  # well under the OS argument limit (macOS 1 MiB incl. environment)
 
 
 class HarnessError(RuntimeError):
@@ -182,7 +185,31 @@ def _run(cmd: list[str], cwd: Path, env: dict[str, str], timeout: float) -> tupl
         return proc.returncode, out
 
 
-def _covering_tests(data_file: Path, scratch: Path, path: str, spans: list[FunctionSpan]) -> dict[str, list[str]]:
+def _chunks(items: list[str], max_chars: int = _MAX_ARGV_CHARS) -> list[list[str]]:
+    """Split node ids so that no single command line exceeds ``max_chars`` of arguments."""
+    chunks: list[list[str]] = [[]]
+    size = 0
+    for item in items:
+        if chunks[-1] and size + len(item) + 1 > max_chars:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(item)
+        size += len(item) + 1
+    return chunks
+
+
+def _run_chunks(plain: list[str], tests: list[str], cwd: Path, env: dict[str, str], timeout: float):
+    """Run ``tests`` in argv-sized chunks; stop at the first chunk that fails or times out."""
+    deadline = time.monotonic() + timeout
+    code, out = 0, ""
+    for chunk in _chunks(tests):
+        code, out = _run([*plain, *chunk], cwd, env, max(deadline - time.monotonic(), 1.0))
+        if code != 0:
+            break
+    return code, out
+
+
+def _covering_tests(data_file: Path, scratch: Path, path: str, spans: list[FunctionSpan]) -> dict[str, list[str]] | None:
     from coverage import CoverageData
 
     data = CoverageData(basename=str(data_file))
@@ -190,8 +217,11 @@ def _covering_tests(data_file: Path, scratch: Path, path: str, spans: list[Funct
     wanted = os.path.realpath(scratch / path)
     contexts: dict[int, list[str]] = {}
     for measured in data.measured_files():
-        if os.path.realpath(measured) == wanted:
+        # relative_files = True in a target's coverage config stores paths relative to the scratch root
+        if os.path.realpath(scratch / measured) == wanted:
             contexts = data.contexts_by_lineno(measured)
+    if not any(c for ctxs in contexts.values() for c in ctxs):
+        return None
     return {
         span.locator: sorted(
             {c for line in range(span.first_line, span.last_line + 1) for c in contexts.get(line, []) if c}
@@ -242,17 +272,23 @@ def run_audit(paths: list[Path]) -> Report:
             raise HarnessError(f"baseline red (pytest {'timeout' if code is None else f'exit {code}'}):\n{tail}")
         timeout = max(10.0, 3 * elapsed)
         report = Report()
+        empty_files: list[str] = []
         run_env = {k: v for k, v in env.items() if k != "STUB_COV_DATA"}
         plain = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x"]
         for path in paths:
             spans, skipped = find_functions(sources[path])
             report.skipped.extend({"file": path.as_posix(), **s} for s in skipped)
             covering = _covering_tests(data_file, scratch, path.as_posix(), spans)
+            if covering is None:
+                empty_files.append(path.as_posix())
+                continue
             target = scratch / path
             for span in spans:
                 report.results.append(
                     _stub_one(plain, run_env, scratch, target, sources[path], path, span, covering[span.locator], timeout)
                 )
+        if empty_files and len(empty_files) == len(paths):
+            raise HarnessError("coverage mapping empty: check source roots (no test line coverage in any target file)")
         return report
     finally:
         shutil.rmtree(scratch_parent, ignore_errors=True)
@@ -270,7 +306,7 @@ def _stub_one(
     target.write_text(stub_source(source, span), encoding="utf-8")
     started = time.monotonic()
     try:
-        code, out = _run([*plain, *tests], scratch, env, timeout)
+        code, out = _run_chunks(plain, tests, scratch, env, timeout)
     finally:
         target.write_text(source, encoding="utf-8")
     seconds = round(time.monotonic() - started, 3)
