@@ -173,3 +173,13 @@ def test_decorated_nested_def_first_statement_does_not_abort(tmp_path):
     assert "Traceback" not in done.stderr
     spans, _ = find_functions("def deco(f):\n    @wraps(f)\n    def w():\n        return 1\n    return w\n")
     assert stub_source("def deco(f):\n    @wraps(f)\n    def w():\n        return 1\n    return w\n", spans[0]) == "def deco(f):\n    return None\n"
+
+
+def test_stub_breaking_conftest_import_is_detected_as_crash(tmp_path):
+    make_flat_repo(tmp_path, False)
+    (tmp_path / "mod.py").write_text(MODULE + "\n\ndef build():\n    return [1]\n\n\nTABLE = list(build())\n")
+    (tmp_path / "tests/conftest.py").write_text("from mod import TABLE\n")
+    (tmp_path / "tests/test_mod.py").write_text(TESTS + "\nfrom mod import build\n\n\ndef test_build():\n    assert build() == [1]\n")
+    done = run_flat(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert {r["function"]: r for r in json.loads(done.stdout)["results"]}["build"]["detected_by"] == "crash"

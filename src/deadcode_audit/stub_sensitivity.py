@@ -51,7 +51,7 @@ def pytest_unconfigure(config):
 _MAX_ARGV_CHARS = 100_000  # well under the OS argument limit (macOS 1 MiB incl. environment)
 
 
-_COLLECTION_ERROR_MARKERS = ("ERROR collecting", "errors during collection", "found no collectors")
+_COLLECTION_ERROR_MARKERS = ("ERROR collecting", "errors during collection", "found no collectors", "while loading conftest")
 
 
 class HarnessError(RuntimeError):
