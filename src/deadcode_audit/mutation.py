@@ -182,6 +182,54 @@ def build_mutation_targets(paths: list[Path], *, compare_branch: str | None = No
 build_mypy_targets = build_mutation_targets
 
 
+def mutation_unit_spans(source: str) -> list[tuple[int, int]]:
+    """Return ``(first, last)`` line spans of mutmut's mutation units.
+
+    A unit is a top-level function or a method of a top-level class (nested defs belong to
+    the outermost unit); its span starts at the first decorator.
+    """
+    units: list[ast.AST] = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ClassDef):
+            units.extend(n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            units.append(node)
+    return [
+        (min([u.lineno, *(d.lineno for d in u.decorator_list)]), u.end_lineno or u.lineno)  # type: ignore[attr-defined]
+        for u in units
+    ]
+
+
+def build_touched_lines(targets: list[Path], compare_branch: str) -> dict[str, frozenset[int]]:
+    """Map each target to the lines of the functions its diff touched (merge-base..HEAD).
+
+    Added files and files whose working tree differs from HEAD are left out of the map, which
+    means "mutate everything". A file whose changed lines fall in no function (module- or
+    class-level only) maps to an empty set, so nothing in it is mutated.
+    """
+    compare_ref = diffscope._resolve_compare_ref(compare_branch)
+    merge_base = diffscope._git_output("merge-base", "HEAD", compare_ref)
+    originals = set(diffscope.git_lines("ls-tree", "-r", "--name-only", merge_base))
+    touched: dict[str, frozenset[int]] = {}
+    for path in targets:
+        name = path.as_posix()
+        if name not in originals:
+            continue
+        dirty = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", name], cwd=diffscope.REPO_ROOT, check=False)
+        if dirty.returncode != 0:
+            print(f"{name}: working tree differs from HEAD, mutating whole file", file=sys.stderr)
+            continue
+        diff_text = diffscope._git_output("diff", "-U0", f"{merge_base}..HEAD", "--", name)
+        changed = diffscope.parse_touched_lines(diff_text)
+        spans = mutation_unit_spans((diffscope.REPO_ROOT / path).read_text(encoding="utf-8"))
+        selected = [(lo, hi) for lo, hi in spans if any(lo <= line <= hi for line in changed)]
+        covered = {line for lo, hi in selected for line in range(lo, hi + 1)}
+        if changed - {line for lo, hi in spans for line in range(lo, hi + 1)}:
+            print(f"{name}: changed lines outside functions not mutated", file=sys.stderr)
+        touched[name] = frozenset(covered)
+    return touched
+
+
 def build_mutation_copy_roots(paths: list[Path]) -> list[Path]:
     """Return broad source roots that mutmut must copy to run tests."""
     roots = diffscope.project_paths("mutation_roots", diffscope.source_roots())
@@ -406,8 +454,37 @@ def _purge_original_source_modules() -> None:
             del sys.modules[name]
 
 
-def _run_mutmut_for_paths(paths: list[Path]) -> int:
-    """Execute mutmut for the provided paths using the repo's shared config."""
+def _restrict_coverage_to_touched(mutmut_main: Any, touched: dict[str, frozenset[int]]) -> Callable[[], None]:
+    """Intersect mutmut's covered-line map with touched function lines; return an undo callable.
+
+    mutmut only mutates nodes starting on a "covered" line, so narrowing that map narrows
+    mutant generation (and therefore the gate's kill rate) to the touched functions.
+    """
+    real_gather = mutmut_main.gather_coverage
+
+    def gather(runner: Any, source_files: Any) -> dict[str, set[int]]:
+        covered = real_gather(runner, source_files)
+        for name, lines in touched.items():
+            key = str((Path("mutants") / name).absolute())
+            if key in covered:
+                covered[key] &= lines
+        return covered
+
+    mutmut_main.gather_coverage = gather
+    return lambda: setattr(mutmut_main, "gather_coverage", real_gather)
+
+
+def _run_mutmut_for_paths(paths: list[Path], touched: dict[str, frozenset[int]] | None = None) -> int:
+    """Execute mutmut for the provided paths using the repo's shared config.
+
+    ``touched`` (from ``build_touched_lines``) restricts mutants to those lines; ``None`` keeps
+    whole-file mutation.
+    """
+    if touched is not None:
+        paths = [p for p in paths if touched.get(p.as_posix()) != frozenset()]
+        if not paths:
+            print("No mutants: no touched functions vs compare branch")
+            return 0
     if not paths:
         print("No mutation targets changed vs compare branch")
         return 0
@@ -432,6 +509,7 @@ def _run_mutmut_for_paths(paths: list[Path]) -> int:
             mutant_children.add(pid)
         return pid
 
+    undo_restrict = _restrict_coverage_to_touched(mutmut_main, touched) if touched else None
     os.fork = tracking_fork  # type: ignore[assignment]
     os.wait = lambda: reap_next_mutant_child(real_wait, mutant_children)  # type: ignore[assignment]
     try:
@@ -440,7 +518,11 @@ def _run_mutmut_for_paths(paths: list[Path]) -> int:
     finally:
         os.fork = real_fork  # type: ignore[assignment]
         os.wait = real_wait  # type: ignore[assignment]
+        if undo_restrict is not None:
+            undo_restrict()
     stat = _load_mutation_gate_stat()
+    if not any(vars(stat).values()):
+        print("No mutants generated")
     print(
         f"Mutation kill rate: {kill_rate(stat):.1%} "
         f"(killed={stat.killed}, survived={stat.survived}, floor={min_kill_rate():.0%})"
@@ -451,12 +533,12 @@ def _run_mutmut_for_paths(paths: list[Path]) -> int:
     return exit_code
 
 
-def run_mutmut_for_paths(paths: list[Path]) -> int:
+def run_mutmut_for_paths(paths: list[Path], touched: dict[str, frozenset[int]] | None = None) -> int:
     """Run the native driver while restoring the caller's working directory."""
     if not hasattr(os, "fork"):
         raise RuntimeError("Mutation requires POSIX fork; use Linux/macOS or WSL")
     original_cwd = Path.cwd()
     try:
-        return _run_mutmut_for_paths(paths)
+        return _run_mutmut_for_paths(paths, touched)
     finally:
         os.chdir(original_cwd)

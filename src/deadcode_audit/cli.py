@@ -67,7 +67,8 @@ def _cmd_run_mutmut_changed(args: argparse.Namespace) -> int:
     if changed and not targets:
         print("No mutation targets: all changed runtime files are strictly AST-equivalent to compare branch")
         return 0
-    return mutation.run_mutmut_for_paths(targets)
+    touched = mutation.build_touched_lines(targets, args.compare_branch) if args.only_touched_functions else None
+    return mutation.run_mutmut_for_paths(targets, touched)
 
 
 def _cmd_runtime_consumer_check(args: argparse.Namespace) -> int:
@@ -268,7 +269,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "Print changed files for the mutation dead-code gate",
         null=True,
     )
-    _with_compare("run-mutmut-changed", "Run mutmut against changed dead-code targets")
+    _with_compare("run-mutmut-changed", "Run mutmut against changed dead-code targets").add_argument(
+        "--only-touched-functions",
+        action="store_true",
+        help="Mutate only functions whose lines the diff touched (kill rate over those mutants)",
+    )
     _with_compare(
         "runtime-consumer-check",
         "Fail when changed public symbols have no runtime consumer",

@@ -122,6 +122,24 @@ def parse_added_lines(diff_text: str) -> set[int]:
     return added
 
 
+def parse_touched_lines(diff_text: str) -> set[int]:
+    """Return new-side lines a ``git diff -U0`` patch touched, counting pure deletions.
+
+    Like ``parse_added_lines`` but a zero-count hunk (lines removed, none added) marks the
+    surrounding new-side lines ``start`` and ``start + 1`` so a deletion inside a function
+    still touches it.
+    """
+    touched: set[int] = set()
+    for raw_line in diff_text.splitlines():
+        match = _DIFF_HUNK_RE.match(raw_line)
+        if match is None:
+            continue
+        start = int(match.group("start"))
+        count = 1 if match.group("count") is None else int(match.group("count"))
+        touched.update(range(start, start + count) if count else (start, start + 1))
+    return touched
+
+
 def added_lines_by_file(compare_branch: str, paths: list[Path]) -> dict[str, set[int]]:
     """Map each changed file to the set of new-side lines it added or modified."""
     compare_ref = _resolve_compare_ref(compare_branch)
