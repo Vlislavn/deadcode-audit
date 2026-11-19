@@ -3,7 +3,11 @@
 ## [Unreleased]
 
 ### Added
+<<<<<<< HEAD
 - `run-mutmut-changed --only-touched-functions` (default off): mutate only functions whose lines the diff touched, so the kill rate covers those mutants only. Module/class-level-only changes mutate nothing (reported on stderr); added files and dirty files mutate whole.
+=======
+- `stub-sensitivity`: advisory audit stubbing each function body (`return None`/`raise`) in a scratch copy; lists functions no covering test detects. Red baseline exits 2; target tree untouched. Finds functions no covering test notices crashing/failing, not weak assertions; generators skipped; import-time-only functions are 'not covered'. Per-stub RSS cap (max 2 GiB, 4x baseline) => detected_by 'memory'; BOM sources accepted and restored byte-exact.
+>>>>>>> stub-sensitivity
 - `overlaps`: function embeddings persist in SQLite under `$XDG_CACHE_HOME/deadcode-audit` (vectors only, keyed by source hash and pinned model/tokenizer/library identity); unchanged functions are not re-encoded. Unpinnable models or cache failures compute normally.
 - `growth --base BASE --head HEAD`: size and churn of changed non-test Python files, ported from agent-skills. JSON includes counts, deltas, exclusions and AST-unknown locators. No model, checkout, score change or new blocking threshold.
 - Mixed Python/JS/TS scan/CI and function overlaps with exact source identities (`javascript` extra; Oxlint 1.90.0, Tree-sitter 0.25.2 pinned to avoid reproduced 0.26.0 native corruption). Python-only results unchanged; no JS dead-export/Markdown/mutation claim.
