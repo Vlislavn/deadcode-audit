@@ -435,7 +435,7 @@ dev = [
 requires-dist = [
     { name = "mutmut", marker = "extra == 'mutation'", specifier = "==3.7.0" },
     { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.26" },
-    { name = "pytest", marker = "extra == 'mutation'", specifier = ">=8,<10" },
+    { name = "pytest", marker = "extra == 'mutation'", specifier = ">=8,<9.2" },
     { name = "pytest-timeout", marker = "extra == 'mutation'", specifier = ">=2.3,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "torch", marker = "extra == 'embeddings'", specifier = ">=2.2" },
@@ -451,7 +451,7 @@ provides-extras = ["vulture", "mutation", "embeddings", "javascript"]
 dev = [
     { name = "build" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "pytest", specifier = ">=8,<10" },
+    { name = "pytest", specifier = ">=8,<9.2" },
     { name = "pytest-cov", specifier = ">=4" },
     { name = "ruff", specifier = ">=0.9" },
 ]
