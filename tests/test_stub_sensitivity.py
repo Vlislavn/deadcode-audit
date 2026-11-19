@@ -183,3 +183,13 @@ def test_stub_breaking_conftest_import_is_detected_as_crash(tmp_path):
     done = run_flat(tmp_path)
     assert done.returncode == 0, done.stderr
     assert {r["function"]: r for r in json.loads(done.stdout)["results"]}["build"]["detected_by"] == "crash"
+
+
+def test_stub_breaking_filterwarnings_import_is_detected_as_crash(tmp_path):
+    make_flat_repo(tmp_path, False)
+    (tmp_path / "mod.py").write_text(MODULE + "\n\ndef build():\n    return [1]\n\n\nTABLE = list(build())\n\n\nclass W(UserWarning):\n    pass\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\nfilterwarnings =\n    ignore::mod.W\n")
+    (tmp_path / "tests/test_mod.py").write_text(TESTS + "\nfrom mod import build\n\n\ndef test_build():\n    assert build() == [1]\n")
+    done = run_flat(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert {r["function"]: r for r in json.loads(done.stdout)["results"]}["build"]["detected_by"] == "crash"
