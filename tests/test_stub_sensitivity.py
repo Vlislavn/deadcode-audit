@@ -142,3 +142,34 @@ def test_empty_coverage_mapping_is_harness_error(tmp_path):
     )
     assert done.returncode == 2
     assert "coverage mapping empty: check source roots" in done.stderr
+
+
+def run_flat(root):
+    return subprocess.run(
+        [sys.executable, "-m", "deadcode_audit", "stub-sensitivity", "--json", "mod.py"],
+        cwd=root, env=dict(os.environ, DEADCODE_REPO_ROOT=str(root)), capture_output=True, text=True, timeout=120, check=False,
+    )
+
+
+def test_stub_breaking_import_is_detected_as_crash(tmp_path):
+    # a stub that makes the test module fail at import/collection must not abort the audit (pytest -x exits 4 there)
+    make_flat_repo(tmp_path, False)
+    (tmp_path / "mod.py").write_text(MODULE + "\n\ndef build():\n    return [1]\n\n\nTABLE = list(build())\n")
+    (tmp_path / "tests/test_mod.py").write_text(TESTS + "\nfrom mod import TABLE, build\n\n\ndef test_table():\n    assert TABLE == [1] and build() == [1]\n")
+    done = run_flat(tmp_path)
+    assert done.returncode == 0, done.stderr
+    by_name = {r["function"]: r for r in json.loads(done.stdout)["results"]}
+    assert by_name["build"]["detected"] and by_name["build"]["detected_by"] == "crash"
+
+
+def test_decorated_nested_def_first_statement_does_not_abort(tmp_path):
+    make_flat_repo(tmp_path, False)
+    (tmp_path / "mod.py").write_text(
+        MODULE + "\n\ndef deco(func):\n    @staticmethod\n    def wrapper(*args):\n        return func(*args)\n\n    return wrapper\n"
+    )
+    (tmp_path / "tests/test_mod.py").write_text(TESTS + "\nfrom mod import deco\n\n\ndef test_deco():\n    assert deco(len)([1]) == 1\n")
+    done = run_flat(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert "Traceback" not in done.stderr
+    spans, _ = find_functions("def deco(f):\n    @wraps(f)\n    def w():\n        return 1\n    return w\n")
+    assert stub_source("def deco(f):\n    @wraps(f)\n    def w():\n        return 1\n    return w\n", spans[0]) == "def deco(f):\n    return None\n"

@@ -51,6 +51,9 @@ def pytest_unconfigure(config):
 _MAX_ARGV_CHARS = 100_000  # well under the OS argument limit (macOS 1 MiB incl. environment)
 
 
+_COLLECTION_ERROR_MARKERS = ("ERROR collecting", "errors during collection", "found no collectors")
+
+
 class HarnessError(RuntimeError):
     """The audit itself failed (red baseline, process failure, parse error); never a clean result."""
 
@@ -146,8 +149,11 @@ def find_functions(source: str) -> tuple[list[FunctionSpan], list[dict[str, str]
             skipped.append({"function": locator, "reason": reason})
             continue
         first = node.body[1] if _is_docstring(node.body[0]) and len(node.body) > 1 else node.body[0]
+        # a decorated nested def/class starts at its first decorator, not at the `def` line
+        decorators = getattr(first, "decorator_list", [])
+        first_line = min([first.lineno, *(d.lineno for d in decorators)])
         found.append(
-            FunctionSpan(locator, first.lineno, node.end_lineno or first.lineno, " " * first.col_offset, _stub_kind(node))
+            FunctionSpan(locator, first_line, node.end_lineno or first.lineno, " " * first.col_offset, _stub_kind(node))
         )
     return found, skipped
 
@@ -284,9 +290,11 @@ def run_audit(paths: list[Path]) -> Report:
                 continue
             target = scratch / path
             for span in spans:
-                report.results.append(
-                    _stub_one(plain, run_env, scratch, target, sources[path], path, span, covering[span.locator], timeout)
-                )
+                stubbed = _stub_one(plain, run_env, scratch, target, sources[path], path, span, covering[span.locator], timeout)
+                if stubbed is None:
+                    report.skipped.append({"file": path.as_posix(), "function": span.locator, "reason": "stub does not parse"})
+                else:
+                    report.results.append(stubbed)
         if empty_files and len(empty_files) == len(paths):
             raise HarnessError("coverage mapping empty: check source roots (no test line coverage in any target file)")
         return report
@@ -297,13 +305,18 @@ def run_audit(paths: list[Path]) -> Report:
 def _stub_one(
     plain: list[str], env: dict[str, str], scratch: Path, target: Path, source: str, path: Path,
     span: FunctionSpan, tests: list[str], timeout: float,
-) -> StubResult:
+) -> StubResult | None:
+    """Stub one function and run its covering tests; ``None`` when the stubbed source does not parse."""
     def result(detected: bool, by: str | None, reason: str | None = None, seconds: float = 0.0) -> StubResult:
         return StubResult(path.as_posix(), span.locator, span.stub_kind, detected, by, len(tests), seconds, reason)
 
     if not tests:
         return result(False, None, "not covered")
-    target.write_text(stub_source(source, span), encoding="utf-8")
+    try:
+        stubbed = stub_source(source, span)
+    except SyntaxError:
+        return None
+    target.write_text(stubbed, encoding="utf-8")
     started = time.monotonic()
     try:
         code, out = _run_chunks(plain, tests, scratch, env, timeout)
@@ -316,7 +329,8 @@ def _stub_one(
         return result(False, None, "no covering test failed", seconds)
     if code == 1:
         return result(True, "test failure", seconds=seconds)
-    if code == 2:
+    if code == 2 or (code == 4 and any(marker in out for marker in _COLLECTION_ERROR_MARKERS)):
+        # pytest -x turns a collection/import error caused by the stub into exit 4 on some versions
         return result(True, "crash", seconds=seconds)
     tail = "\n".join(out.strip().splitlines()[-10:])
     raise HarnessError(f"pytest exit {code} while stubbing {path}::{span.locator}:\n{tail}")
