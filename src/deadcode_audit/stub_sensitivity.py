@@ -10,6 +10,7 @@ The target working tree is never written.
 from __future__ import annotations
 
 import ast
+import codecs
 import json
 import os
 import shutil
@@ -178,18 +179,47 @@ def _copy_scratch(scratch: Path) -> None:
             shutil.copy2(src, scratch / name, follow_symlinks=False)
 
 
-def _run(cmd: list[str], cwd: Path, env: dict[str, str], timeout: float) -> tuple[int | None, str]:
-    """Run a command in its own process group; ``None`` as code means it timed out (and was killed)."""
+_MEMORY = -9999  # pseudo exit code: the group was killed for exceeding its RSS cap
+_POLL_SECONDS = 0.1
+
+
+def _mem_floor() -> int:
+    return int(os.environ.get("DEADCODE_STUB_MEM_FLOOR_MB", "2048")) << 20
+
+
+def _group_rss(pgid: int) -> int:
+    """Summed resident set (bytes) of process group ``pgid`` (RLIMIT_AS is not enforced on macOS, so poll ps)."""
+    out = subprocess.run(["ps", "-axo", "pgid=,rss="], capture_output=True, text=True, check=False).stdout
+    total = 0
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(pgid):
+            total += int(fields[1]) * 1024
+    return total
+
+
+def _run(
+    cmd: list[str], cwd: Path, env: dict[str, str], timeout: float, mem_cap: int | None = None, peak: list[int] | None = None
+) -> tuple[int | None, str]:
+    """Run a command in its own process group; ``None`` as code means it timed out, ``_MEMORY`` that its RSS passed ``mem_cap``."""
+    deadline = time.monotonic() + timeout
     with subprocess.Popen(
         cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True
     ) as proc:
-        try:
-            out, _ = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            out, _ = proc.communicate()
-            return None, out
-        return proc.returncode, out
+        while True:
+            try:
+                out, _ = proc.communicate(timeout=_POLL_SECONDS)
+                return proc.returncode, out
+            except subprocess.TimeoutExpired:
+                pass
+            rss = _group_rss(proc.pid)
+            if peak is not None:
+                peak[0] = max(peak[0], rss)
+            exceeded = mem_cap is not None and rss > mem_cap
+            if exceeded or time.monotonic() >= deadline:
+                os.killpg(proc.pid, signal.SIGKILL)
+                out, _ = proc.communicate()
+                return (_MEMORY if exceeded else None), out
 
 
 def _chunks(items: list[str], max_chars: int = _MAX_ARGV_CHARS) -> list[list[str]]:
@@ -205,12 +235,12 @@ def _chunks(items: list[str], max_chars: int = _MAX_ARGV_CHARS) -> list[list[str
     return chunks
 
 
-def _run_chunks(plain: list[str], tests: list[str], cwd: Path, env: dict[str, str], timeout: float):
+def _run_chunks(plain: list[str], tests: list[str], cwd: Path, env: dict[str, str], timeout: float, mem_cap: int | None = None):
     """Run ``tests`` in argv-sized chunks; stop at the first chunk that fails or times out."""
     deadline = time.monotonic() + timeout
     code, out = 0, ""
     for chunk in _chunks(tests):
-        code, out = _run([*plain, *chunk], cwd, env, max(deadline - time.monotonic(), 1.0))
+        code, out = _run([*plain, *chunk], cwd, env, max(deadline - time.monotonic(), 1.0), mem_cap)
         if code != 0:
             break
     return code, out
@@ -243,10 +273,12 @@ def run_audit(paths: list[Path]) -> Report:
         import coverage  # noqa: F401
     except ImportError as exc:
         raise HarnessError("coverage is not importable; install the mutation extra (uv sync --extra mutation)") from exc
+    raw: dict[Path, bytes] = {}
     sources: dict[Path, str] = {}
     for path in paths:
         try:
-            sources[path] = (diffscope.REPO_ROOT / path).read_text(encoding="utf-8")
+            raw[path] = (diffscope.REPO_ROOT / path).read_bytes()
+            sources[path] = raw[path].decode("utf-8-sig")
             find_functions(sources[path])
         except (SyntaxError, UnicodeDecodeError, OSError) as exc:
             raise HarnessError(f"cannot parse {path}: {exc}") from exc
@@ -272,12 +304,14 @@ def run_audit(paths: list[Path]) -> Report:
         )
         base = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "stub_cov_plugin"]
         started = time.monotonic()
-        code, out = _run([*base, *roots], scratch, env, timeout=3600)
+        peak = [0]
+        code, out = _run([*base, *roots], scratch, env, timeout=3600, peak=peak)
         elapsed = time.monotonic() - started
         if code != 0:
             tail = "\n".join(out.strip().splitlines()[-15:])
             raise HarnessError(f"baseline red (pytest {'timeout' if code is None else f'exit {code}'}):\n{tail}")
         timeout = max(10.0, 3 * elapsed)
+        mem_cap = max(_mem_floor(), 4 * peak[0])
         report = Report()
         empty_files: list[str] = []
         run_env = {k: v for k, v in env.items() if k != "STUB_COV_DATA"}
@@ -291,7 +325,7 @@ def run_audit(paths: list[Path]) -> Report:
                 continue
             target = scratch / path
             for span in spans:
-                stubbed = _stub_one(plain, run_env, scratch, target, sources[path], path, span, covering[span.locator], timeout)
+                stubbed = _stub_one(plain, run_env, scratch, target, raw[path], path, span, covering[span.locator], timeout, mem_cap)
                 if stubbed is None:
                     report.skipped.append({"file": path.as_posix(), "function": span.locator, "reason": "stub does not parse"})
                 else:
@@ -304,8 +338,8 @@ def run_audit(paths: list[Path]) -> Report:
 
 
 def _stub_one(
-    plain: list[str], env: dict[str, str], scratch: Path, target: Path, source: str, path: Path,
-    span: FunctionSpan, tests: list[str], timeout: float,
+    plain: list[str], env: dict[str, str], scratch: Path, target: Path, raw: bytes, path: Path,
+    span: FunctionSpan, tests: list[str], timeout: float, mem_cap: int,
 ) -> StubResult | None:
     """Stub one function and run its covering tests; ``None`` when the stubbed source does not parse."""
     def result(detected: bool, by: str | None, reason: str | None = None, seconds: float = 0.0) -> StubResult:
@@ -314,18 +348,21 @@ def _stub_one(
     if not tests:
         return result(False, None, "not covered")
     try:
-        stubbed = stub_source(source, span)
+        stubbed = stub_source(raw.decode("utf-8-sig"), span)
     except SyntaxError:
         return None
-    target.write_text(stubbed, encoding="utf-8")
+    bom = codecs.BOM_UTF8 if raw.startswith(codecs.BOM_UTF8) else b""
+    target.write_bytes(bom + stubbed.encode("utf-8"))
     started = time.monotonic()
     try:
-        code, out = _run_chunks(plain, tests, scratch, env, timeout)
+        code, out = _run_chunks(plain, tests, scratch, env, timeout, mem_cap)
     finally:
-        target.write_text(source, encoding="utf-8")
+        target.write_bytes(raw)
     seconds = round(time.monotonic() - started, 3)
     if code is None:
         return result(True, "timeout", seconds=seconds)
+    if code == _MEMORY:
+        return result(True, "memory", seconds=seconds)
     if code == 0:
         return result(False, None, "no covering test failed", seconds)
     if code == 1:

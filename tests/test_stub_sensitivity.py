@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 from deadcode_audit.stub_sensitivity import _chunks, find_functions, stub_source
 
@@ -193,3 +194,45 @@ def test_stub_breaking_filterwarnings_import_is_detected_as_crash(tmp_path):
     done = run_flat(tmp_path)
     assert done.returncode == 0, done.stderr
     assert {r["function"]: r for r in json.loads(done.stdout)["results"]}["build"]["detected_by"] == "crash"
+
+
+def commit_flat(root, module_bytes, tests):
+    (root / "tests").mkdir()
+    (root / "mod.py").write_bytes(module_bytes)
+    (root / "tests/test_mod.py").write_text(tests)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-qm", "i"], cwd=root, check=True)
+
+
+def flat_run(root, **extra_env):
+    return subprocess.run(
+        [sys.executable, "-m", "deadcode_audit", "stub-sensitivity", "--json", "mod.py"],
+        cwd=root, env=dict(os.environ, DEADCODE_REPO_ROOT=str(root), **extra_env),
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+
+
+def test_memory_hungry_stub_is_detected_as_memory(tmp_path):
+    # stubbing `finished` to return None makes the caller loop forever, growing a buffer
+    commit_flat(
+        tmp_path,
+        b"def finished(n):\n    return n >= 3\n\n\ndef fill():\n    buf = bytearray()\n    n = 0\n"
+        b"    while not finished(n):\n        buf += bytes(50_000_000)\n        n += 1\n    return len(buf)\n",
+        "from mod import fill\n\n\ndef test_fill():\n    assert fill() == 150_000_000\n",
+    )
+    started = time.monotonic()
+    done = flat_run(tmp_path, DEADCODE_STUB_MEM_FLOOR_MB="1500")
+    assert done.returncode == 0, done.stderr
+    by_name = {r["function"]: r for r in json.loads(done.stdout)["results"]}
+    assert by_name["finished"]["detected_by"] == "memory"
+    assert time.monotonic() - started < 60
+
+
+def test_bom_source_is_audited_and_bytes_preserved(tmp_path):
+    module = b"\xef\xbb\xbfdef asserted():\r\n    return 1\r\n"
+    commit_flat(tmp_path, module, "from mod import asserted\n\n\ndef test_a():\n    assert asserted() == 1\n")
+    done = flat_run(tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["results"][0]["detected"] is True
+    assert (tmp_path / "mod.py").read_bytes() == module
