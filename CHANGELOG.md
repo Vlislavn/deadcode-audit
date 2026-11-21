@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Added `reachability/duplicate-constant` (warning): the same module-level string constant (≥10 chars, not a dotted import path or dunder, not in `__all__`) assigned in 2+ runtime modules is reported, naming the module the others import (transitively) as its owner.
 - `mutation` extra pins `pytest>=8,<9.2` (mutmut 3.7.0 breaks with pytest 9.2: `Function` has no `_nodeid`).
 - `run-mutmut-changed --only-touched-functions` (default off): mutate only functions whose lines the diff touched, so the kill rate covers those mutants only. Module/class-level-only changes mutate nothing (reported on stderr); added files and dirty files mutate whole.
 - `stub-sensitivity`: advisory audit stubbing each function body (`return None`/`raise`) in a scratch copy; lists functions no covering test detects. Red baseline exits 2; target tree untouched. Finds functions no covering test notices crashing/failing, not weak assertions; generators skipped; import-time-only functions are 'not covered'. Per-stub RSS cap (max 2 GiB, 4x baseline) => detected_by 'memory'; BOM sources accepted and restored byte-exact.

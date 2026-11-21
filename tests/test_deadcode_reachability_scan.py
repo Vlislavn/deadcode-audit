@@ -201,3 +201,46 @@ def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_br
     monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
     assert reachability.vulture_whitelist_names() >= {"alpha", "beta"}
     assert "gamma" not in reachability.vulture_whitelist_names()
+
+
+# --- reachability/duplicate-constant: one business string defined in 2+ runtime modules ---
+
+
+def _duplicate_constant_sites(root: Path, files: dict[str, str]) -> dict[tuple[str, int], str]:
+    (root / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n  test_roots: [tests]\n  import_roots: [src, '.']\n")
+    for name, text in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text)
+    result = run_deadcode_cli(root, "scan", "--json")
+    return {
+        (d["filePath"], d["line"]): d["message"]
+        for d in json.loads(result.stdout)["diagnostics"]
+        if d["rule"] == "reachability/duplicate-constant"
+    }
+
+
+def test_duplicate_constant_flags_the_importing_side_and_names_the_owner(tmp_path: Path) -> None:
+    shared = "triage-approved-token"
+    flagged = _duplicate_constant_sites(
+        tmp_path,
+        {
+            "src/app/__init__.py": "",
+            "src/app/core.py": f'RULE = "{shared}"\nTWICE = "same-module-twice"\nTWICE_AGAIN = "same-module-twice"\n'
+            'ENC = "utf-8"\nMAIN = "__main__"\nSHORT = "short-9ch"\nPATH = "os.path.join.module"\n'
+            'EXPORTED = "exported-shared-value"\n__all__ = ["EXPORTED"]\n',
+            "src/app/cli.py": f'from app.core import RULE\n\nLOCAL_RULE = "{shared}"\nENC = "utf-8"\nMAIN = "__main__"\n'
+            'SHORT = "short-9ch"\nPATH = "os.path.join.module"\nEXPORTED = "exported-shared-value"\n'
+            '__all__ = ["EXPORTED"]\n\n\ndef main():\n    return RULE, LOCAL_RULE\n',
+            "tests/test_app.py": f'TEST_RULE = "{shared}"\n',
+        },
+    )
+    assert list(flagged) == [("src/app/cli.py", 3)]  # not core.py (the owner), tests, short/common/dotted/__all__/same-module
+    assert "src/app/core.py:1" in flagged[("src/app/cli.py", 3)]
+    assert "define it once in src/app/core.py" in flagged[("src/app/cli.py", 3)]
+
+
+def test_duplicate_constant_without_import_relation_lists_locations_only(tmp_path: Path) -> None:
+    text = 'LIMIT_TEXT = "the same rule text"\n'
+    flagged = _duplicate_constant_sites(tmp_path, {"src/app/a.py": text, "src/app/b.py": text})
+    assert sorted(flagged) == [("src/app/a.py", 1), ("src/app/b.py", 1)]
+    assert all("define it once" not in message for message in flagged.values())

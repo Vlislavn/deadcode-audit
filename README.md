@@ -43,7 +43,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Findings and score | `deadcode scan [paths...] [--json]` — Python plus JS/TS (`javascript` extra + Oxlint) |
 | Enforce quality policy | `deadcode ci --json` — exit 1 on errors or score below threshold |
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
-| Unused public symbols | `deadcode reachability-scan --json` — advisory |
+| Unused public symbols | `deadcode reachability-scan --json` — advisory; also `reachability/duplicate-constant` (same module-level string constant in 2+ modules) |
 | Import cycles | `deadcode cycles [--advisory] --json` |
 | Size and churn | `deadcode growth --base BASE [--head HEAD] [--json] [files...]` — changed non-test Python files, exact commits; no bloat threshold |
 | Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |

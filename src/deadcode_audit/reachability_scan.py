@@ -18,12 +18,15 @@ and zero subprocess.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from deadcode_audit import diffscope
 from deadcode_audit.diagnostic import ENGINE_REACHABILITY, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
+from deadcode_audit.framework import safe_parse
 from deadcode_audit.reachability import (
     ADVISORY_LABEL,
     ADVISORY_RANK,
@@ -59,6 +62,18 @@ DEAD_SYMBOL_RULE = RuleSpec(
     help="Top-level function/class with no runtime consumer (unreferenced, or referenced only by tests). "
     "Remove it or wire it into the product; downgrade via `.deadcode.yml` rules if it is intentional API.",
 )
+
+DUPLICATE_CONSTANT_RULE = RuleSpec(
+    rule="reachability/duplicate-constant",
+    engine=ENGINE_REACHABILITY,
+    default_severity=Severity.WARNING,
+    category="Duplicated rules",
+    help="The same string constant is assigned at module level in several modules, so a business rule/token "
+    "lives in two places. Define it once in the owning module and import it elsewhere.",
+)
+
+_MIN_CONSTANT_LENGTH = 10  # shorter strings ("utf-8", "__main__", "id") repeat by coincidence
+_DOTTED_PATH = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)+")  # "pkg.module.Name": an import path, not a rule
 
 
 def build_candidates() -> list[PublicSymbolDefinition]:
@@ -158,6 +173,105 @@ def dead_symbol_diagnostics(files: list[Path]) -> list[Diagnostic]:
         for definition, reason in rows
         if definition.file_path in scanned and ADVISORY_RANK.get(reason, 99) <= _ACTIONABLE_MAX_RANK
     ]
+
+
+def _string_constants(source: str) -> list[tuple[str, str, int]]:
+    """``(name, value, line)`` of module-level ``NAME = "<str>"`` constants worth comparing across modules."""
+    tree = safe_parse(source)
+    if tree is None:
+        return []
+    exported = {
+        elt.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+        and isinstance(node.value, (ast.List, ast.Tuple, ast.Set))
+        for elt in node.value.elts
+        if isinstance(elt, ast.Constant)
+    }
+    found: list[tuple[str, str, int]] = []
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        value = getattr(node, "value", None)
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or not isinstance(value, ast.Constant):
+            continue
+        name, text = targets[0].id, value.value
+        if (
+            isinstance(text, str)
+            and len(text) >= _MIN_CONSTANT_LENGTH
+            and not _DOTTED_PATH.fullmatch(text)
+            and not (name.startswith("__") and name.endswith("__"))
+            and name not in exported
+        ):
+            found.append((name, text, node.lineno))
+    return found
+
+
+def _owner_module(sites: list[tuple[Path, str, int]], corpus_text: dict[Path, str]) -> Path | None:
+    """The duplicated constant's natural home: the module the other duplicating modules (transitively) import.
+
+    Ties break on how many modules import it directly; a still-tied top is undecidable -> None (the message
+    then just lists the locations).
+    """
+    facts = [collect_module_facts(text, path) for path, text in corpus_text.items()]
+    known = {fact.dotted for fact in facts}
+    edges: dict[str, set[str]] = defaultdict(set)
+    for fact in facts:
+        for module, name, _alias in fact.from_imports:
+            edges[fact.dotted] |= {m for m in (module, f"{module}.{name}") if m in known}
+        edges[fact.dotted] |= {module for module, _alias in fact.plain_imports if module in known}
+
+    def reachable(start: str) -> set[str]:
+        seen: set[str] = set()
+        todo = [start]
+        while todo:
+            todo.extend(edges[todo.pop()] - seen - {start})
+            seen |= set(todo)
+        return seen
+
+    group = {module_dotted_name(path): path for path, _name, _line in sites}
+    reach = {dotted: reachable(dotted) for dotted in group}
+    ranked = sorted(
+        (
+            (
+                sum(dotted in reach[other] for other in group if other != dotted),
+                sum(dotted in targets for targets in edges.values()),
+            ),
+            path,
+        )
+        for dotted, path in group.items()
+    )
+    best = ranked[-1][0]
+    return ranked[-1][1] if [key for key, _path in ranked].count(best) == 1 else None
+
+
+def duplicate_constant_diagnostics(files: list[Path]) -> list[Diagnostic]:
+    """One warning per ``files`` site of a long string constant assigned in 2+ runtime modules."""
+    corpus_text = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
+    by_value: dict[str, list[tuple[Path, str, int]]] = defaultdict(list)
+    for path, text in corpus_text.items():
+        for name, value, line in _string_constants(text):
+            by_value[value].append((path, name, line))
+    scanned = set(files)
+    diagnostics: list[Diagnostic] = []
+    for value, sites in by_value.items():
+        if len({path for path, _name, _line in sites}) < 2:
+            continue  # repeated inside ONE module is that module's own business
+        owner = _owner_module(sites, corpus_text)
+        shown = value if len(value) <= 40 else value[:37] + "..."
+        for path, name, line in sites:
+            if path == owner or path not in scanned:
+                continue
+            others = ", ".join(f"{p.as_posix()}:{n}" for p, _name, n in sites if (p, n) != (path, line))
+            home = f"; define it once in {owner.as_posix()} and import it" if owner else ""
+            diagnostics.append(
+                diagnostic_from_spec(
+                    DUPLICATE_CONSTANT_RULE,
+                    file_path=path.as_posix(),
+                    line=line,
+                    message=f'{name} = "{shown}" is also assigned at {others}{home}',
+                )
+            )
+    return sorted(diagnostics, key=lambda d: (d.file_path, d.line))
 
 
 def _shown_rows(rows: list[tuple[PublicSymbolDefinition, str]], top: int) -> list[tuple[PublicSymbolDefinition, str]]:
