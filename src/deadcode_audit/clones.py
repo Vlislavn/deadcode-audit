@@ -108,6 +108,30 @@ def normalize_function(node: _FuncDef) -> list[str]:
     return tokens
 
 
+def invocation_remainders(node: _FuncDef, total: int) -> tuple[tuple[str, int], ...]:
+    """``(callee, own tokens left)`` per name the function invokes: the call's statement is deleted when the call IS its value."""
+    parents = {child: parent for parent in ast.walk(node) for child in ast.iter_child_nodes(parent)}
+    cuts: dict[str, dict[int, tuple[ast.AST, int]]] = {}
+    for call in (sub for sub in ast.walk(node) if isinstance(sub, ast.Call)):
+        name = call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else None
+        if name is None:
+            continue
+        current = call
+        while isinstance(parents.get(current), ast.Await):
+            current = parents[current]
+        parent = parents.get(current)
+        removed = parent if isinstance(parent, (ast.Expr, ast.Return)) or (
+            isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is current) else call
+        wrapper = ast.FunctionDef(name=node.name, args=node.args, body=[removed if isinstance(removed, ast.stmt) else ast.Expr(removed)],
+                                  decorator_list=[], returns=None, type_comment=None, type_params=[])
+        cuts.setdefault(name, {})[id(removed)] = (removed, len(normalize_function(wrapper)) - (0 if isinstance(removed, ast.stmt) else 1))
+    result = []
+    for name, bucket in cuts.items():
+        nested = {id(sub) for removed, _ in bucket.values() for sub in ast.walk(removed) if sub is not removed}
+        result.append((name, total - sum(size for key, (_, size) in bucket.items() if key not in nested)))
+    return tuple(sorted(result))
+
+
 def clone_similarity(a: list[str], b: list[str]) -> float:
     """Token-sequence similarity in [0, 1] (1.0 == structurally identical).
 
@@ -152,6 +176,8 @@ class FuncRecord:
     column: int = 1
     start_byte: int | None = None
     end_byte: int | None = None
+    # (callee name, own tokens left after deleting the invoking statements), sorted; see overlaps call-site rule.
+    calls: tuple[tuple[str, int], ...] = ()
 
 
 def collect_functions(source: str, path: Path) -> list[FuncRecord]:

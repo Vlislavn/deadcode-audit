@@ -31,6 +31,7 @@
 - Permit Transformers 5.x so consuming repositories can retain their patched dependency constraints.
 - Remove an overwritten partial detector definition that broke the package's native lint gate; add a duplicate-definition regression contract.
 - `deadcode overlaps` is now two-pass by default: pass 1 deterministic struct+API (unchanged), pass 2 CodeSage-small-v2 (pinned revision, embed-only) adds type-4 candidates as `embed_pairs`. Falls back to pass 1 with one warning when the model or extras are missing; `--no-embed` skips pass 2.
+- `overlaps` skips call-site pairs (a function and a caller that is only glue around it: its own body minus the invoking statement is below `--min-tokens`; JS/TS incl. JSX components and import aliases, Python via ast) and now excludes test files (`*.test.js(x)`, `*.testkit.js(x)`, `testSetup.js`, `__tests__/`, `tests/`) even for explicit paths.
 - `growth --hotspots` also treats `*.testkit.js(x)` as test files (shared `javascript.is_js_test_file`).
 
 ### Removed

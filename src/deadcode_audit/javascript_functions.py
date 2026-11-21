@@ -399,7 +399,7 @@ def _literal_token(node, buffer: bytes) -> str:
     return _LITERAL_TYPES[node.type]
 
 
-def _runtime_body_tokens(function_node, buffer: bytes) -> tuple[str, ...]:
+def _runtime_body_tokens(function_node, buffer: bytes, sizes: dict | None = None) -> tuple[str, ...]:
     body = function_node.child_by_field_name("body")
     if body is None:
         return ()
@@ -426,6 +426,7 @@ def _runtime_body_tokens(function_node, buffer: bytes) -> tuple[str, ...]:
                     emit(child)
             return
 
+        start = len(tokens)
         tokens.append(f"({node.type}")
         if node.child_count == 0:
             if node.type == "identifier":
@@ -454,6 +455,8 @@ def _runtime_body_tokens(function_node, buffer: bytes) -> tuple[str, ...]:
             for child in node.children:
                 emit(child)
         tokens.append(")")
+        if sizes is not None:
+            sizes[_node_key(node)] = len(tokens) - start
 
     mode_tokens = []
     if any(child.type == "async" for child in function_node.children):
@@ -466,6 +469,80 @@ def _runtime_body_tokens(function_node, buffer: bytes) -> tuple[str, ...]:
     tokens.extend(mode_tokens)
     emit(body)
     return tuple(tokens)
+
+
+_INVOCATION_TYPES = frozenset({"call_expression", "new_expression", "jsx_opening_element", "jsx_self_closing_element"})
+
+
+def _callee_name(node, buffer: bytes, aliases: dict[str, str]) -> str | None:
+    """Name invoked by a call/new/JSX-component node: an identifier or the last property of a member chain."""
+    if node.type == "call_expression":
+        target = node.child_by_field_name("function")
+    elif node.type == "new_expression":
+        target = node.child_by_field_name("constructor")
+    else:
+        target = node.child_by_field_name("name")
+    while target is not None and target.type in _TRANSPARENT_EXPRESSION_TYPES and target.named_children:
+        target = target.named_children[0]
+    if target is None:
+        return None
+    if target.type == "member_expression" and node.type != "jsx_opening_element":
+        target = target.child_by_field_name("property")
+    if target is None or target.type not in {"identifier", "property_identifier"}:
+        return None
+    name = _source_text(buffer, target)
+    if node.type.startswith("jsx_") and not name[:1].isupper():
+        return None  # lowercase JSX tags are DOM elements, not component invocations
+    return aliases.get(name, name)
+
+
+def _removed_with_invocation(node):
+    """Nodes deleted with one invocation: its statement when the call IS the statement's value, else just the call."""
+    if node.type == "jsx_opening_element":
+        closing = node.parent.child_by_field_name("close_tag") if node.parent is not None else None
+        return [node, closing] if closing is not None else [node]
+    current = node
+    while current.parent is not None and current.parent.type in {"await_expression", "parenthesized_expression"}:
+        current = current.parent
+    parent = current.parent
+    if parent is None:
+        return [node]
+    if parent.type in {"expression_statement", "return_statement"}:
+        return [parent]
+    declaration = parent.parent
+    if parent.type == "variable_declarator" and declaration is not None and len(declaration.named_children) == 1:
+        return [declaration]
+    if parent.type == "assignment_expression" and parent.child_by_field_name("right") == current:
+        statement = parent.parent
+        return [statement] if statement is not None and statement.type == "expression_statement" else [node]
+    return [node]
+
+
+def _invocation_remainders(function_node, buffer: bytes, sizes: dict, total: int, aliases: dict[str, str]):
+    """``(callee, own tokens left)`` for every name the function invokes (nested closures included)."""
+    removed: dict[str, dict[tuple[int, int, str], int]] = {}
+    pending = [function_node.child_by_field_name("body")]
+    while pending:
+        node = pending.pop()
+        if node is None:
+            continue
+        if node.type in _INVOCATION_TYPES:
+            name = _callee_name(node, buffer, aliases)
+            if name is not None:
+                bucket = removed.setdefault(name, {})
+                for target in _removed_with_invocation(node):
+                    bucket[_node_key(target)] = sizes.get(_node_key(target), 0)
+        pending.extend(node.children)
+    result = []
+    for name, bucket in removed.items():
+        spans = sorted(bucket, key=lambda key: (key[0], -key[1]))
+        cut, covered_to = 0, -1
+        for start, end, kind in spans:  # nested removals (B(B(x))) are counted once, by their outermost node
+            if start >= covered_to:
+                cut += bucket[(start, end, kind)]
+                covered_to = end
+        result.append((name, total - cut))
+    return tuple(sorted(result))
 
 
 def _transparent_parent(node):
@@ -556,6 +633,20 @@ def _symbol(function_node, buffer: bytes) -> str:
     return f"anonymous@{line}:{column}"
 
 
+def _import_aliases(root, buffer: bytes) -> dict[str, str]:
+    """``import {a as b}`` -> ``{"b": "a"}`` so a call through the local alias names the imported function."""
+    aliases = {}
+    pending = [root]
+    while pending:
+        node = pending.pop()
+        if node.type == "import_specifier":
+            name, alias = node.child_by_field_name("name"), node.child_by_field_name("alias")
+            if name is not None and alias is not None:
+                aliases[_source_text(buffer, alias)] = _source_text(buffer, name)
+        pending.extend(node.children)
+    return aliases
+
+
 def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
     """Extract executable JS/TS functions and exact UTF-8 source spans for clone analysis.
 
@@ -582,9 +673,11 @@ def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
         pending.extend(reversed(node.children))
 
     functions.sort(key=lambda node: (node.start_byte, -node.end_byte))
+    aliases = _import_aliases(root, analysed)
     records = []
     for node in functions:
-        tokens = _runtime_body_tokens(node, analysed)
+        sizes: dict = {}
+        tokens = _runtime_body_tokens(node, analysed, sizes)
         token_tuple = tuple(tokens)
         record = FuncRecord(
             file_path=path,
@@ -596,6 +689,7 @@ def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
             column=_location(buffer, node.start_byte)[1],
             start_byte=node.start_byte,
             end_byte=node.end_byte,
+            calls=_invocation_remainders(node, analysed, sizes, len(token_tuple), aliases),
         )
         snippet = buffer[node.start_byte : node.end_byte].decode("utf-8")
         records.append((record, snippet))

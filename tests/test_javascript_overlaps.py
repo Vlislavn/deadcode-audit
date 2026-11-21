@@ -430,3 +430,87 @@ def test_python_functions_without_byte_spans_keep_their_existing_candidate_behav
         semantic_threshold=0,
     )
     assert len(pairs) == 1
+
+
+_JS_CALL_SITES = (
+    "export async function fetchThing(key, options) {\n"
+    "  const rows = await Promise.all(options.filter(Boolean).map((option) => client.get(key, option)));\n"
+    "  return Object.fromEntries(rows.filter(([name, value]) => value != null));\n"
+    "}\n"
+    "export const queryFn = () => fetchThing(itemKey, { priority: 'high', limit: 5 });\n"
+    "export function Panel(props) {\n"
+    "  return <Card title={props.title} tone=\"calm\" onClose={props.onClose} />;\n"
+    "}\n"
+    "export function Page(props) {\n"
+    "  return <Panel title={props.title} onClose={props.onClose} />;\n"
+    "}\n"
+    "export function summary(change) {\n"
+    "  switch (change.kind) {\n"
+    "    case 'add': return `add ${change.path || change.name || change.key}`;\n"
+    "    case 'drop': return `drop ${change.path || change.name || change.key}`;\n"
+    "    case 'move': return `move ${change.from} to ${change.to}`;\n"
+    "    default: return fetchThing(change.key, { limit: 1 });\n"
+    "  }\n"
+    "}\n"
+)
+_JS_POLLERS = (
+    "export function pollOne(client, setState) {\n"
+    "  return setTimeout(async () => {\n"
+    "    try { const s = await client.status(); setState(s); if (s.running) pollOne(client, setState); }\n"
+    "    catch { pollOne(client, setState); }\n"
+    "  }, 3000);\n"
+    "}\n"
+    "export async function pollTwo(client, setState) {\n"
+    "  for (;;) {\n"
+    "    try { const s = await client.status(); setState(s); if (!s.running) return s; }\n"
+    "    catch { /* transient */ }\n"
+    "    await new Promise((resolve) => setTimeout(resolve, 3000));\n"
+    "  }\n"
+    "}\n"
+)
+
+
+def _js_pairs(tmp_path, monkeypatch, files):
+    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
+    (tmp_path / "src").mkdir()
+    for name, text in files.items():
+        (tmp_path / "src" / name).write_text(text)
+    corpus = overlaps.build_corpus(["src"])
+    pairs = overlaps.find_overlaps(corpus, threshold=0, min_tokens=40, semantic_threshold=0)
+    return corpus, {frozenset((p.a_symbol, p.b_symbol)) for p in pairs}
+
+
+def test_js_thin_call_site_is_dropped_but_siblings_and_callers_with_own_logic_stay(tmp_path, monkeypatch):
+    corpus, pairs = _js_pairs(tmp_path, monkeypatch, {"a.jsx": _JS_CALL_SITES, "poll.js": _JS_POLLERS})
+    remainders = {f.record.symbol: dict(f.record.calls) for f in corpus}
+    assert remainders["queryFn"]["fetchThing"] < 40  # glue: arrow whose whole body is the call
+    assert remainders["Page"]["Panel"] < 40  # glue: JSX component use is an invocation
+    assert remainders["summary"]["fetchThing"] >= 40  # a call in one branch of a switch is not glue
+    assert frozenset({"fetchThing", "queryFn"}) not in pairs
+    assert frozenset({"Panel", "Page"}) not in pairs
+    assert frozenset({"fetchThing", "summary"}) in pairs
+    assert frozenset({"pollOne", "pollTwo"}) in pairs  # genuine sibling pollers
+
+
+def test_js_call_through_import_alias_and_member_access_names_the_imported_function(tmp_path, monkeypatch):
+    text = (
+        "import { fetchThing as load } from './a';\n"
+        "export const viaAlias = () => load(itemKey, { priority: 'high', limit: 5, offset: 10 });\n"
+        "export const viaMember = () => api.fetchThing(itemKey, { priority: 'high', limit: 5, offset: 10 });\n"
+    )
+    corpus, _ = _js_pairs(tmp_path, monkeypatch, {"a.js": _JS_CALL_SITES.split("export const")[0], "b.js": text})
+    by_symbol = {f.record.symbol: dict(f.record.calls) for f in corpus}
+    assert by_symbol["viaAlias"]["fetchThing"] == 0 and by_symbol["viaMember"]["fetchThing"] == 0
+
+
+def test_js_test_files_and_directories_are_not_corpus_functions(tmp_path, monkeypatch):
+    body = "export function f(value) { return api.echo(value, { a: 1, b: 2 }); }\n"
+    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n  test_roots: [spec]\n")
+    for name in ("keep.js", "x.test.jsx", "testSetup.js", "__tests__/y.js"):
+        path = tmp_path / "src" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+    corpus = overlaps.build_corpus(["src"])
+    assert [f.record.file_path.as_posix() for f in corpus] == ["src/keep.js"]

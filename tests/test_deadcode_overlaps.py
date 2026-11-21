@@ -293,3 +293,47 @@ def test_python_spans_are_utf8_byte_offsets_of_the_def(tmp_path: Path, monkeypat
     [func] = _python_corpus(tmp_path, monkeypatch, source)
     raw = source.encode("utf-8")
     assert raw[func.record.start_byte : func.record.end_byte].decode("utf-8") == "def f(x):\n    return x"
+
+
+# --- a function and its own thin call site are not an overlap pair; callers with their own logic stay ---
+
+_CALL_SITES = (
+    "def fetch_thing(client, key, options):\n"
+    "    rows = [client.get(key, option) for option in options if option]\n"
+    "    return {name: value for name, value in rows if value is not None}\n"
+    "\n\n"
+    "def thin_caller(client, key):\n"
+    "    return fetch_thing(client, key, ['a', 'b', 'c'])\n"
+    "\n\n"
+    "def busy_caller(client, key, items):\n"
+    "    seen = []\n"
+    "    for item in items:\n"
+    "        if item.id in seen:\n"
+    "            continue\n"
+    "        seen.append(item.id)\n"
+    "        client.touch(item.id, key, item.name)\n"
+    "    total = sum(len(item.name) for item in items)\n"
+    "    return fetch_thing(client, key, ['a']), total\n"
+)
+
+
+def test_python_thin_call_site_is_dropped_but_a_caller_with_own_logic_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    corpus = _python_corpus(tmp_path, monkeypatch, _CALL_SITES)
+    calls = {f.record.symbol: dict(f.record.calls).get("fetch_thing") for f in corpus}
+    assert calls["thin_caller"] < 40 <= calls["busy_caller"]
+    pairs = overlaps.find_overlaps(corpus, threshold=0, min_tokens=1, semantic_threshold=0)
+    symbols = [{p.a_symbol, p.b_symbol} for p in pairs]
+    assert {"fetch_thing", "thin_caller"} not in symbols
+    assert {"fetch_thing", "busy_caller"} in symbols and {"thin_caller", "busy_caller"} in symbols
+
+
+def test_python_test_paths_are_excluded_from_explicit_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(overlaps.diffscope, "REPO_ROOT", tmp_path)
+    (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
+    (tmp_path / "src" / "tests").mkdir(parents=True)
+    (tmp_path / "src" / "m.py").write_text("def kept(x):\n    return x\n")
+    (tmp_path / "src" / "test_m.py").write_text("def skipped_by_name(x):\n    return x\n")
+    (tmp_path / "src" / "tests" / "helper.py").write_text("def skipped_by_dir(x):\n    return x\n")
+    assert [f.record.symbol for f in overlaps.build_corpus(["src"])] == ["kept"]

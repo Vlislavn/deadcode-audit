@@ -2,7 +2,8 @@
 
 Pass 1 (deterministic, always runs): every function in ``src/`` (Python, plus JavaScript/TypeScript when the
 ``javascript`` extra is installed) is compared against every other within its language pool (upper-triangle,
-each pair once; strict same-file ancestor/descendant source-span pairs, e.g. a method and its nested closure, are skipped);
+each pair once; strict same-file ancestor/descendant source-span pairs, e.g. a method and its nested closure, and call-site
+pairs, a function and a caller that is only glue around it, are skipped);
 score = 0.6 * structural token similarity + 0.4 * API-name Jaccard.
 Pass 2 (CodeSage embed-only, default): each function's top-``_EMBED_TOPK`` cosine neighbours that pass 1 did
 not already report are added as type-4 (same behaviour, different code) candidates, ranked by cosine.
@@ -83,6 +84,8 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
         candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
                                                exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
         selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
+    # Tests are repetitive by design and every other command skips them; explicit paths and JS test names bypassed the filter.
+    selected = [path for path in selected if not (diffscope.is_test_path(path) or javascript.is_js_test_file(path))]
     for path in selected:
         if path.suffix in javascript.SUFFIXES:
             from deadcode_audit.javascript_functions import collect_functions
@@ -104,7 +107,8 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
                 tokens = tuple(clones.normalize_function(node))
                 record = clones.FuncRecord(path, node.lineno, node.name, tokens, clones.semantic_signature(tokens),
                                            start_byte=line_starts[node.lineno - 1] + node.col_offset,
-                                           end_byte=line_starts[node.end_lineno - 1] + node.end_col_offset)
+                                           end_byte=line_starts[node.end_lineno - 1] + node.end_col_offset,
+                                           calls=clones.invocation_remainders(node, len(tokens)))
                 # Fail-open: a None segment (rare, position-less node) -> "" -> deterministic-only for this fn.
                 funcs.append(_SourcedFunc(record=record, source=ast.get_source_segment(source, node) or ""))
     return funcs
@@ -145,11 +149,21 @@ def _strict_same_file_containment(first: clones.FuncRecord, second: clones.FuncR
     return contained and spans[:2] != spans[2:]
 
 
-def _comparable(first: _SourcedFunc, second: _SourcedFunc) -> bool:
-    """Pairs are compared within one language pool, never across a strict same-file containment."""
-    return first.record.language == second.record.language and not _strict_same_file_containment(
-        first.record, second.record
-    )
+def _glue_around(caller: clones.FuncRecord, callee: clones.FuncRecord, min_tokens: int) -> bool:
+    """Whether ``caller`` invokes ``callee`` by name and keeps fewer than ``min_tokens`` of its own after the call is deleted."""
+    name = callee.symbol.rsplit(".", 1)[-1]
+    return any(callee_name == name and remainder < min_tokens for callee_name, remainder in caller.calls)
+
+
+def _comparable(first: _SourcedFunc, second: _SourcedFunc, min_tokens: int) -> bool:
+    """Pairs are compared within one language pool, never across strict same-file containment or call-site glue.
+
+    A call-site pair is a function and a caller that is only glue around it (its own body, minus the invoking
+    statement, is below the eligibility gate); a caller with its own substantial logic is still compared.
+    """
+    a, b = first.record, second.record
+    return (a.language == b.language and not _strict_same_file_containment(a, b)
+            and not _glue_around(a, b, min_tokens) and not _glue_around(b, a, min_tokens))
 
 
 def _count_skipped_containment(funcs: list[_SourcedFunc], min_tokens: int) -> int:
@@ -198,7 +212,7 @@ def find_overlaps(
     for i, first in enumerate(survivors):
         tokens_i, sem_i = first.record.tokens, first.record.semantic
         for second in survivors[i + 1 :]:
-            if not _comparable(first, second):
+            if not _comparable(first, second, min_tokens):
                 continue
             tokens_j, sem_j = second.record.tokens, second.record.semantic
 
@@ -242,7 +256,7 @@ def find_embed_candidates(
     matrix[range(len(survivors)), range(len(survivors))] = -2.0  # a function is not its own neighbour
     for i, first in enumerate(survivors):  # no neighbours across language pools or strict JS/TS containment
         for j in range(i + 1, len(survivors)):
-            if not _comparable(first, survivors[j]):
+            if not _comparable(first, survivors[j], min_tokens):
                 matrix[i, j] = matrix[j, i] = -2.0
     nearest = (-matrix).argsort(axis=1)[:, : min(topk, len(survivors) - 1)]
     reported = {_pair_keys(p) for p in known}
