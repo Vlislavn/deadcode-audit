@@ -34,7 +34,7 @@ project:
 ```
 
 `import_roots` identifies Python import bases; configure each separate application if necessary.
-Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same file; `deadcode rules` lists rule IDs. Optional `vulture_whitelist` is a list of target-owned files. See `examples/monorepo/` for the migration policy.
+Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same file; `deadcode rules` lists rule IDs. Optional `vulture_whitelist` is a list of target-owned files; names in them count as used for both Vulture and `reachability-scan`/`scan`. See `examples/monorepo/` for the migration policy.
 
 ## Commands
 

@@ -9,7 +9,10 @@ Two structural anti-patterns that weak coding agents leave behind around ``try/e
   (SOURCE-D001) forbids: an error is silently dropped, so a later step runs on a broken state.
 
 * **redundant-try-catch** (WARNING) — a handler whose entire body is a bare ``raise`` (re-raise
-  that adds nothing): the ``try/except`` is pure ceremony and can be deleted.
+  that adds nothing): the ``try/except`` is pure ceremony and can be deleted. Not flagged when a
+  LATER handler of the same ``try`` could catch the exception (bare, ``Exception``,
+  ``BaseException`` or a builtin supertype), or when that relation cannot be resolved statically:
+  the bare ``raise`` then shields it from the broader handler.
 
 Both rules are **AST-only and exact-body** matchers, deliberately false-negative-biased. They
 fire only when the handler body is EXACTLY the slop shape — any extra statement, any ``raise``
@@ -21,6 +24,7 @@ by renaming.
 from __future__ import annotations
 
 import ast
+import builtins
 from typing import TYPE_CHECKING
 
 from deadcode_audit.diagnostic import (
@@ -173,10 +177,51 @@ def _is_bare_reraise_body(body: list[ast.stmt]) -> bool:
     return isinstance(statement, ast.Raise) and statement.exc is None and statement.cause is None
 
 
+def _handler_types(handler: ast.ExceptHandler) -> list[type[BaseException]] | None:
+    """Builtin exception classes a handler names; ``[BaseException]`` for bare; None if unresolvable."""
+    if handler.type is None:
+        return [BaseException]
+    elements = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    resolved: list[type[BaseException]] = []
+    for element in elements:
+        candidate = getattr(builtins, element.id, None) if isinstance(element, ast.Name) else None
+        if not (isinstance(candidate, type) and issubclass(candidate, BaseException)):
+            return None
+        resolved.append(candidate)
+    return resolved
+
+
+def _may_be_caught_later(handler: ast.ExceptHandler, later: list[ast.ExceptHandler]) -> bool:
+    """True unless every later handler provably cannot catch what ``handler`` re-raises.
+
+    Unresolvable names (non-builtin, dotted, ...) count as "may catch": false-negative bias.
+    """
+    own = _handler_types(handler)
+    for other in later:
+        theirs = _handler_types(other)
+        if own is None or theirs is None:
+            return True
+        if any(issubclass(mine, their) for mine in own for their in theirs):
+            return True
+    return False
+
+
+def _shielding_reraises(tree: ast.AST) -> set[ast.ExceptHandler]:
+    """Handlers that sit before a later handler of the same ``try`` that might catch the error."""
+    shielding: set[ast.ExceptHandler] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            for index, handler in enumerate(node.handlers):
+                if _may_be_caught_later(handler, node.handlers[index + 1 :]):
+                    shielding.add(handler)
+    return shielding
+
+
 def detect(ctx: FileContext) -> list[Diagnostic]:
     """Flag swallowed-exception and redundant bare-reraise handlers in one file (AST-only)."""
     diagnostics: list[Diagnostic] = []
     file_path = ctx.path.as_posix()
+    shielding = _shielding_reraises(ctx.tree)
     for node in ast.walk(ctx.tree):
         if not isinstance(node, ast.ExceptHandler):
             continue
@@ -184,7 +229,7 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
         # A re-raise anywhere in the body means the error IS propagated -> never a swallow.
         if _body_contains_raise(body):
             # The only re-raise shape that is itself slop is the *sole bare* re-raise.
-            if _is_bare_reraise_body(body):
+            if _is_bare_reraise_body(body) and node not in shielding:
                 diagnostics.append(
                     diagnostic_from_spec(
                         REDUNDANT,

@@ -707,6 +707,19 @@ def test_precommit_vulture_ignore_names_match_config_ssot() -> None:
     assert f"--ignore-names {config.vulture_ignore_names_arg()}" in precommit
 
 
+def test_vulture_gate_ignores_framework_protocol_attributes_but_not_similar_names(tmp_path: Path) -> None:
+    """Real Vulture run: pydantic's ``model_config`` is never reported; a similarly named unused attribute is."""
+    pytest.importorskip("vulture")
+    (tmp_path / "src" / "m.py").write_text(
+        "class Schema:\n    model_config = {}\n    model_fields = {}\n    model_configs = {}\n    model_config_extra = 1\n",
+        encoding="utf-8",
+    )
+    reported = {f.message for f in parse_vulture_findings(vulture_gate._run_vulture(60))}
+    assert "unused variable 'model_configs'" in reported
+    assert "unused variable 'model_config_extra'" in reported
+    assert not {m for m in reported if "'model_config'" in m or "'model_fields'" in m}
+
+
 def test_main_dispatches_vulture_changed(monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI wires the vulture-changed subcommand to the gate with the given branch."""
     captured: dict[str, str] = {}

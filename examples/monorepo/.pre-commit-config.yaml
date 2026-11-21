@@ -3,5 +3,5 @@ repos:
     hooks:
       - id: vulture
         name: Vulture
-        entry: python -m vulture --ignore-names exc_type,tb,DataclassInstance
+        entry: python -m vulture --ignore-names exc_type,tb,DataclassInstance,model_config,model_fields
         language: system

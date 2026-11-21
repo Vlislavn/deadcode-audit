@@ -37,6 +37,7 @@ from deadcode_audit.reachability import (
     public_symbol_definitions,
     resolved_reference_exists,
     runtime_corpus_files,
+    vulture_whitelist_names,
 )
 
 
@@ -100,9 +101,12 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
     facts = [collect_module_facts(text, path) for path, text in corpus_text.items()]
     reexport_map = build_reexport_map(facts)
     entry_points = entry_point_targets()
+    whitelisted = vulture_whitelist_names()
 
     unresolved: list[PublicSymbolDefinition] = []
     for definition in candidates:
+        if definition.symbol in whitelisted:
+            continue  # the repo's configured Vulture whitelist declares it used (same contract as the Vulture gate)
         dotted = module_dotted_name(definition.file_path)
         if (dotted, definition.symbol) in entry_points:
             continue  # consumed by a packaging entry point ([project.scripts] etc.)

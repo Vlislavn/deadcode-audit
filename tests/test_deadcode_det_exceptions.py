@@ -170,6 +170,27 @@ def test_bare_reraise_tuple_handler_fires() -> None:
     assert _rule_ids(src) == [REDUNDANT]
 
 
+def test_bare_reraise_before_unrelated_builtin_handler_fires() -> None:
+    src = (
+        "def f():\n    try:\n        g()\n    except KeyError:\n        raise\n"
+        "    except ValueError:\n        recover()\n"
+    )
+    assert _rule_ids(src) == [REDUNDANT]
+
+
+def test_bare_reraise_with_finally_only_fires() -> None:
+    src = "def f():\n    try:\n        g()\n    except OSError:\n        raise\n    finally:\n        done()\n"
+    assert _rule_ids(src) == [REDUNDANT]
+
+
+def test_last_bare_reraise_after_specific_handler_fires() -> None:
+    src = (
+        "def f():\n    try:\n        g()\n    except ValueError:\n        recover()\n"
+        "    except Exception:\n        raise\n"
+    )
+    assert _rule_ids(src) == [REDUNDANT]
+
+
 # --------------------------------------------------------------------------------------------
 # redundant-try-catch — ADVERSARIAL NEGATIVE (must NOT fire)
 # --------------------------------------------------------------------------------------------
@@ -251,3 +272,36 @@ def test_clean_handler_emits_nothing() -> None:
         "        return resolve(key, exc)\n"
     )
     assert _rule_ids(src) == []
+
+
+# A bare re-raise ahead of a handler that could catch the same error shields it: not ceremony.
+_SHIELD_TAILS = [
+    "except Exception:\n        recover()\n",
+    "except BaseException:\n        recover()\n",
+    "except:  # noqa: E722\n        recover()\n",
+    "except (OSError, Exception):\n        recover()\n",
+    "except LookupError:\n        recover()\n",  # builtin supertype of KeyError
+    "except Unknown:\n        recover()\n",  # unresolvable -> false-negative bias
+]
+
+
+def test_bare_reraise_shielding_a_later_handler_is_not_redundant() -> None:
+    for tail in _SHIELD_TAILS:
+        src = f"def f():\n    try:\n        g()\n    except KeyError:\n        raise\n    {tail}"
+        assert _rule_ids(src) == [], tail
+
+
+def test_unresolvable_reraised_type_before_later_handler_is_not_redundant() -> None:
+    src = (
+        "def f():\n    try:\n        g()\n    except net.Timeout:\n        raise\n"
+        "    except ValueError:\n        recover()\n"
+    )
+    assert _rule_ids(src) == []
+
+
+def test_shielding_reraise_in_nested_try_is_not_redundant() -> None:
+    src = (
+        "async def f():\n    try:\n        try:\n            g()\n        except ValueError:\n            raise\n"
+        "        except Exception:\n            recover()\n    except OSError:\n        raise\n"
+    )
+    assert _lines(src) == [9]

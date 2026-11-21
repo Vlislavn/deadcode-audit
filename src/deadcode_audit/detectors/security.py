@@ -31,6 +31,11 @@ not of the surrounding code, so there is no per-condition doubt to resolve:
 * ``security/dynamic-import`` — dynamic module loading requires a reviewed call-site
   annotation describing the trusted module-selection boundary.
 
+Trade-off (``hardcoded-secret``): a credential-named constant whose value is a lowercase kebab/dotted
+label (2-5 letter-only words, e.g. ``"triage-approved"``) is NOT flagged when the only matching name
+part is the weak ``token``; a passphrase-like lowercase kebab value on a ``*_token`` name is therefore
+no longer flagged. Strong parts (password/secret/api_key/...) and known credential shapes are unaffected.
+
 This module is itself the most likely false positive: every trigger token (the credential-name
 keywords, the ``AKIA``/``sk-``/``eyJ`` shape prefixes, ``eval``, ``shell``) is assembled at runtime
 via string concatenation so neither the masked-source scans nor a future text grep can self-match
@@ -130,6 +135,11 @@ _SECRET_NAME_PARTS: tuple[str, ...] = (
     "aws" + "_secret",
 )
 _SECRET_NAME_RE = re.compile("|".join(_SECRET_NAME_PARTS), re.IGNORECASE)
+# The one WEAK name part: ``*_TOKEN`` names are routinely labels (``TAG_TOKEN = "triage-approved"``),
+# unlike password/secret/key parts. Only a name matching nothing but this part gets the label exemption.
+_WEAK_NAME_PART = "to" + "ken"
+# A lowercase kebab/dotted label: 2-5 letter-only words joined by ``-`` or ``.`` (no digits/uppercase).
+_LOWER_LABEL_RE = re.compile(r"^[a-z]+(?:[-.][a-z]+){1,4}$")
 
 # Known-credential SHAPES, anchored to the *whole* literal so a substring in prose never matches.
 _AWS_PREFIX = "AK" + "IA"
@@ -177,6 +187,12 @@ def _looks_opaque(value: str) -> bool:
     rule from firing on the pervasive ``NAME = "snake_case_label"`` constant idiom.
     """
     return bool(re.search(r"\d", value)) or bool(re.search(r"[^A-Za-z0-9_]", value))
+
+
+def _only_weak_name_parts(names: list[str]) -> bool:
+    """True when every credential-name part matched across ``names`` is the weak ``token`` part."""
+    parts = {m.group(0).lower() for name in names for m in _SECRET_NAME_RE.finditer(name)}
+    return parts == {_WEAK_NAME_PART}
 
 
 def _is_placeholder(value: str) -> bool:
@@ -359,6 +375,15 @@ def _detect_secret(node: ast.AST, path_posix: str) -> Diagnostic | None:
     # A credential-NAMED field whose value is a plain code label/identifier (no digit, no special
     # char) is a constant naming something, not a secret (e.g. EVENT_*_TOKEN = "..._token_...").
     if named_secret and not known_shape and not _looks_opaque(value.strip()):
+        return None
+    # A weak ``*_token`` name holding a lowercase kebab/dotted label (``"triage-approved"``) is a code
+    # label. Strong name parts (password/secret/key ...) never get this exemption.
+    if (
+        named_secret
+        and not known_shape
+        and _LOWER_LABEL_RE.match(value.strip())
+        and _only_weak_name_parts(_target_names(node))
+    ):
         return None
     reason = "matches a known credential shape" if known_shape else "literal assigned to a credential-named field"
     return diagnostic_from_spec(

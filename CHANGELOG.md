@@ -12,6 +12,9 @@
 - Overlaps skip strict same-file JS/TS ancestor/descendant source-span pairs and compare within one language pool; siblings, cross-file pairs and embedding inputs are kept.
 
 ### Fixed
+- `ai-slop/redundant-try-catch`: a bare `raise` handler followed by a later handler that could catch the same error (bare/`Exception`/builtin supertype, or unresolvable) shields it and is no longer reported.
+- `reachability-scan`/`scan` honor `project.vulture_whitelist` (names in it are consumed, as for Vulture). Vulture ignores pydantic `model_config`/`model_fields` by default.
+- `hardcoded-secret`: a `*_token`-named constant holding a lowercase kebab/dotted label of 2-5 letter-only words (e.g. `"triage-approved"`) is no longer flagged; strong name parts (password/secret/api_key/...) and known credential shapes are unaffected.
 - `overlaps`: any exception while loading/running the pass-2 model (e.g. transformers 5.x `all_tied_weights_keys`) warns once, naming the cause, and falls back to pass 1. A JS/TS file that does not parse is skipped with a warning instead of aborting the run; bare `&` in JSX text (rejected by both grammars) now parses. Python methods and their nested closures are no longer reported as overlaps.
 
 ### Changed

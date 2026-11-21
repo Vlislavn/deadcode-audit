@@ -381,6 +381,29 @@ def entry_point_targets() -> set[tuple[str, str]]:
     return targets
 
 
+def vulture_whitelist_names() -> set[str]:
+    """Names the repo's configured ``project.vulture_whitelist`` files declare as used.
+
+    A Vulture whitelist is plain Python that merely *mentions* names (``foo``, ``_.attr``), so the
+    names are its ``Name`` ids and ``Attribute`` attrs. Missing or unparseable files contribute nothing
+    here — the Vulture gate is the one that fails on them.
+    """
+    names: set[str] = set()
+    for relative in diffscope.project_paths("vulture_whitelist", []):
+        path = diffscope.REPO_ROOT / relative
+        if not path.is_file():
+            continue
+        tree = safe_parse(path.read_text(encoding="utf-8-sig"))
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+    return names
+
+
 def runtime_corpus_files() -> list[Path]:
     """Every runtime ``src`` + ``scripts`` Python file, repo-relative (the resolver corpus)."""
     return diffscope.runtime_files()

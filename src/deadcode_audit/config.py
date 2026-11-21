@@ -31,10 +31,15 @@ VULTURE_ADVISORY_CONFIDENCE = 60
 # and typing-only protocol imports referenced solely from string ``cast("...")``
 # annotations (DataclassInstance), which Vulture cannot see inside string
 # literals. The whitelist file cannot suppress these (it only marks globals).
+# ``model_config`` / ``model_fields``: pydantic v2 reads these class attributes by name (documented
+# model configuration / field-registry protocol), so no call site exists for Vulture to see. (SQLAlchemy's
+# ``__tablename__`` needs no entry: Vulture already skips every ``__dunder__`` variable.)
 VULTURE_IGNORE_NAMES: tuple[str, ...] = (
     "exc_type",
     "tb",
     "DataclassInstance",
+    "model_config",
+    "model_fields",
 )
 
 

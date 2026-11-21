@@ -152,3 +152,52 @@ def test_cli_reachability_scan_json_exits_zero(tmp_path: Path) -> None:
             }
         ],
     }
+
+
+# --- the configured Vulture whitelist declares names consumed (real CLI over a tmp corpus) ---
+
+
+def _whitelist_project(tmp_path: Path, *, whitelist_text: str | None) -> None:
+    """Two dead functions in ``pkg``; the whitelist (if any) names only ``documented_tool`` (+ a comment word)."""
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "tools.py").write_text(
+        "def documented_tool():\n    return 1\n\ndef documented_tool_two():\n    return 2\n", encoding="utf-8"
+    )
+    config = "project:\n  source_roots: [pkg]\n"
+    if whitelist_text is not None:
+        (tmp_path / "whitelist.py").write_text(whitelist_text, encoding="utf-8")
+        config += "  vulture_whitelist: [whitelist.py]\n"
+    (tmp_path / ".deadcode.yml").write_text(config, encoding="utf-8")
+
+
+def _scan_symbols(tmp_path: Path) -> list[str]:
+    result = run_deadcode_cli(tmp_path, "reachability-scan", "--json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    return sorted(row["symbol"] for row in json.loads(result.stdout)["symbols"])
+
+
+def test_scan_without_whitelist_reports_both_dead_symbols(tmp_path: Path) -> None:
+    _whitelist_project(tmp_path, whitelist_text=None)
+    assert _scan_symbols(tmp_path) == ["documented_tool", "documented_tool_two"]
+
+
+def test_scan_honors_configured_whitelist_but_still_reports_similar_dead_name(tmp_path: Path) -> None:
+    # bare-name form + a comment mentioning the other name: only the real Name node counts
+    _whitelist_project(tmp_path, whitelist_text="documented_tool  # not documented_tool_two\n_.attr_form\n")
+    assert _scan_symbols(tmp_path) == ["documented_tool_two"]
+
+
+def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deadcode_audit import diffscope, reachability
+
+    (tmp_path / "ok.py").write_text("alpha\n_.beta\n# gamma\n", encoding="utf-8")
+    (tmp_path / "broken.py").write_text("def (:\n", encoding="utf-8")
+    (tmp_path / ".deadcode.yml").write_text(
+        "project:\n  vulture_whitelist: [ok.py, broken.py, missing.py]\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    assert reachability.vulture_whitelist_names() >= {"alpha", "beta"}
+    assert "gamma" not in reachability.vulture_whitelist_names()
