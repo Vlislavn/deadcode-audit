@@ -4,6 +4,7 @@
 
 ### Added
 - Added `reachability/duplicate-constant` (warning): the same module-level string constant (≥10 chars, not a dotted import path or dunder, not in `__all__`) assigned in 2+ runtime modules is reported, naming the module the others import (transitively) as its owner.
+- `growth --hotspots [--base BASE] [--head HEAD] [--top N] [files...]`: read-only ranking of non-test Python and JS/JSX files by non-merge commits touching them x lines x max complexity (ruff C901 for Python, the pinned Oxlint `complexity` rule for JS; each row names the file's most complex function and its length; a language's complexity columns omitted with a note when its tool is unavailable). Whole history of HEAD unless --base is given. Skill smell D8; no new command, no writes.
 - Added advisory rule `code-quality/query-with-effects` (complexity detector): query-named functions (get_/is_/has_/can_/find_/read_/check_/list_/load_) that write (INSERT/UPDATE/DELETE/REPLACE execute, commit, file write/unlink, HTTP post/put/delete/patch, record_/save_/persist_/append_/insert_/write_*_atomic/atomic_write/write_json*/dump_json calls or callbacks) are flagged; get_or_*/*_or_compute*/ensure_* exempt.
 - `mutation` extra pins `pytest>=8,<9.2` (mutmut 3.7.0 breaks with pytest 9.2: `Function` has no `_nodeid`).
 - `run-mutmut-changed --only-touched-functions` (default off): mutate only functions whose lines the diff touched, so the kill rate covers those mutants only. Module/class-level-only changes mutate nothing (reported on stderr); added files and dirty files mutate whole.
@@ -30,6 +31,7 @@
 - Permit Transformers 5.x so consuming repositories can retain their patched dependency constraints.
 - Remove an overwritten partial detector definition that broke the package's native lint gate; add a duplicate-definition regression contract.
 - `deadcode overlaps` is now two-pass by default: pass 1 deterministic struct+API (unchanged), pass 2 CodeSage-small-v2 (pinned revision, embed-only) adds type-4 candidates as `embed_pairs`. Falls back to pass 1 with one warning when the model or extras are missing; `--no-embed` skips pass 2.
+- `growth --hotspots` also treats `*.testkit.js(x)` as test files (shared `javascript.is_js_test_file`).
 
 ### Removed
 - `--embed` and `--embed-topk` (the hybrid and two-stage scoring did not pass the q162 rule).

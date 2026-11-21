@@ -220,6 +220,12 @@ def _cmd_growth(args: argparse.Namespace) -> int:
     import json
     from deadcode_audit import growth
 
+    if args.hotspots:
+        report = growth.hotspots(args.base, args.head, args.paths or None, args.top)
+        print(json.dumps(report, indent=2) if args.json else growth.render_hotspots(report))
+        return 0
+    if not args.base:
+        raise ValueError("growth: --base is required unless --hotspots is given")
     report = growth.compare(args.base, args.head, args.paths or None)
     print(json.dumps(report, indent=2) if args.json else growth.render(report))
     return 0
@@ -341,10 +347,12 @@ def _build_parser() -> argparse.ArgumentParser:
     trend_parser.add_argument("--limit", type=int, default=20, help="Max records to show (0 = all)")
 
     growth_parser = subparsers.add_parser("growth", help="Size/churn facts between commits, without a bloat threshold")
-    growth_parser.add_argument("--base", required=True, help="Exact base commit (not the merge base)")
+    growth_parser.add_argument("--base", help="Exact base commit (not the merge base); with --hotspots, omit for the whole history of --head")
     growth_parser.add_argument("--head", default="HEAD", help="Exact head commit (default: HEAD)")
     growth_parser.add_argument("paths", nargs="*", help="Limit to these changed Python files (tests excluded)")
     growth_parser.add_argument("--json", action="store_true", help="Counts, deltas, churn and per-file coverage")
+    growth_parser.add_argument("--hotspots", action="store_true", help="Rank non-test .py/.js/.jsx files by commits x lines x max complexity (ruff C901; Oxlint complexity for JS) and name each file's most complex function, over BASE..HEAD or all history")
+    growth_parser.add_argument("--top", type=int, default=15, help="With --hotspots: keep the top N files (<= 0 = all)")
 
     # On-demand, advisory: full all-pairs semantic overlap audit (whole tree, NOT diff-scoped).
     overlaps_parser = subparsers.add_parser(

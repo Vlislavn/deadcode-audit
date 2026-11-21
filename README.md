@@ -45,7 +45,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory; also `reachability/duplicate-constant` (same module-level string constant in 2+ modules) |
 | Import cycles | `deadcode cycles [--advisory] --json` |
-| Size and churn | `deadcode growth --base BASE [--head HEAD] [--json] [files...]` — changed non-test Python files, exact commits; no bloat threshold |
+| Size and churn | `deadcode growth --base BASE [--head HEAD] [--json] [files...]` — changed non-test Python files, exact commits; no bloat threshold; `--hotspots` ranks non-test Python and JS/JSX files by commits x lines x max complexity (ruff C901 for Python, pinned Oxlint `complexity` for JS; a language's complexity is omitted with a note when its tool is unavailable) and names each file's most complex function, read-only |
 | Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |
 | Mutation gate | `deadcode mutation-targets`, `deadcode run-mutmut-changed` — `--compare-branch main` |
