@@ -234,7 +234,7 @@ def _cmd_stub_sensitivity(args: argparse.Namespace) -> int:
 def _cmd_cycles(args: argparse.Namespace) -> int:
     from deadcode_audit import cycles
 
-    return cycles.run(as_json=args.json, advisory=args.advisory)
+    return cycles.run(as_json=args.json, advisory=args.advisory, strict_lazy=args.strict_lazy)
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
@@ -391,6 +391,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Report only, always exit 0",
     )
     cycles_parser.add_argument("--json", action="store_true", help="JSON output")
+    cycles_parser.add_argument(
+        "--strict-lazy",
+        action="store_true",
+        help="Count function-local (lazy) imports as hard cycle edges (soft cycles then block)",
+    )
 
     stub_parser = _with_compare(
         "stub-sensitivity",

@@ -18,6 +18,7 @@
 - `overlaps`: any exception while loading/running the pass-2 model (e.g. transformers 5.x `all_tied_weights_keys`) warns once, naming the cause, and falls back to pass 1. A JS/TS file that does not parse is skipped with a warning instead of aborting the run; bare `&` in JSX text (rejected by both grammars) now parses. Python methods and their nested closures are no longer reported as overlaps.
 
 ### Changed
+- `cycles`: `if TYPE_CHECKING:` imports are no longer edges. Cycles that exist only through a function-local import are SOFT (listed in their own section/`kind: soft`, never block); only HARD cycles exit 1. JSON gains `kind`. `--strict-lazy` restores lazy edges as hard.
 - Isolate every native pytest pass/fork in a private cleaned scratch tree. Bound mutation tests with configurable pytest-timeout safety (default 5s, max 60s); keep harness-health counters strict and preserve explicit native budgets.
 - Skip comment-only mutation work only after strict merge-base AST equivalence; retain added files, defaults, decorators, annotations and all real code changes, with an explicit no-op receipt.
 - Preserve IVAI's security command and dynamic-import authorization checks alongside standalone assertion and fail-fast rules.

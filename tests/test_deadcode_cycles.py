@@ -60,7 +60,7 @@ def test_edge_target_prefers_internal_submodule_over_package() -> None:
 # --- run(): advisory vs blocking + allowlist ratchet ---
 
 
-def _graph_with_one_cycle() -> dict[str, set[str]]:
+def _graph_with_one_cycle(**_: bool) -> dict[str, set[str]]:
     return {"x": {"y"}, "y": {"x"}, "z": set()}
 
 
@@ -95,7 +95,7 @@ def test_run_new_cycle_still_blocks_despite_allowlist(
     monkeypatch.setattr(
         cycles,
         "build_import_graph",
-        lambda: {"x": {"y"}, "y": {"x"}, "p": {"q"}, "q": {"p"}},
+        lambda **_: {"x": {"y"}, "y": {"x"}, "p": {"q"}, "q": {"p"}},
     )
     monkeypatch.setattr(
         cycles.config,
@@ -119,6 +119,81 @@ def test_cli_cycles_advisory_json_exits_zero(tmp_path: Path) -> None:
         "advisory": True,
         "count": 1,
         "cycles": [
-            {"key": "modules.left <-> modules.right", "members": ["modules.left", "modules.right"], "allowed": False}
+            {
+                "key": "modules.left <-> modules.right",
+                "members": ["modules.left", "modules.right"],
+                "kind": "hard",
+                "allowed": False,
+            }
         ],
     }
+
+
+# --- TYPE_CHECKING / lazy / hard classification (real CLI over a tmp corpus) ---
+
+
+def _corpus(tmp_path: Path, left: str, right: str) -> Path:
+    source = tmp_path / "src" / "modules"
+    source.mkdir(parents=True)
+    (source / "left.py").write_text(left, encoding="utf-8")
+    (source / "right.py").write_text(right, encoding="utf-8")
+    return tmp_path
+
+
+def _kinds(root: Path, *flags: str) -> tuple[int, list[str]]:
+    result = run_deadcode_cli(root, "cycles", "--json", *flags)
+    return result.returncode, [c["kind"] for c in json.loads(result.stdout)["cycles"]]
+
+
+_TOP = "from modules import right\n"
+_BACK = "from modules import left\n"
+_LAZY = "def f():\n    from modules import left\n    return left\n"
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from modules import left\n",
+        "import typing\nif typing.TYPE_CHECKING:\n    from modules import left\n",
+    ],
+)
+def test_type_checking_import_is_not_an_edge(tmp_path: Path, guard: str) -> None:
+    root = _corpus(tmp_path, _TOP, guard)
+    assert _kinds(root, "--advisory") == (0, [])
+    assert _kinds(root, "--advisory", "--strict-lazy") == (0, [])
+    assert _kinds(root) == (0, [])
+
+
+def test_type_checking_else_branch_is_runtime(tmp_path: Path) -> None:
+    guard = "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    from modules import left\n"
+    assert _kinds(_corpus(tmp_path, _TOP, guard)) == (1, ["hard"])
+
+
+def test_cycle_through_one_lazy_import_is_soft_and_does_not_block(tmp_path: Path) -> None:
+    root = _corpus(tmp_path, _TOP, _LAZY)
+    assert _kinds(root) == (0, ["soft"])
+    assert _kinds(root, "--advisory") == (0, ["soft"])
+
+
+def test_two_top_level_imports_are_hard_and_block(tmp_path: Path) -> None:
+    root = _corpus(tmp_path, _TOP, _BACK)
+    assert _kinds(root) == (1, ["hard"])
+
+
+def test_strict_lazy_restores_lazy_edges_as_hard(tmp_path: Path) -> None:
+    root = _corpus(tmp_path, _TOP, _LAZY)
+    assert _kinds(root, "--strict-lazy") == (1, ["hard"])
+
+
+def test_text_output_lists_hard_first_then_soft_section(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "modules"
+    source.mkdir(parents=True)
+    (source / "a.py").write_text("from modules import b\n", encoding="utf-8")
+    (source / "b.py").write_text("from modules import a\n", encoding="utf-8")
+    (source / "c.py").write_text("from modules import d\n", encoding="utf-8")
+    (source / "d.py").write_text("def f():\n    from modules import c\n", encoding="utf-8")
+    result = run_deadcode_cli(tmp_path, "cycles")
+    assert result.returncode == 1
+    out = result.stdout
+    assert "1 circular import group(s)" in out
+    assert out.index("modules.a -> modules.b") < out.index("soft cycle(s)") < out.index("modules.c -> modules.d")
