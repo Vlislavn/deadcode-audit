@@ -12,6 +12,7 @@ import pytest
 
 from deadcode_audit import clones, diffscope, overlap_embed, overlaps
 from deadcode_audit.cli import main
+from deadcode_audit.javascript_functions import collect_functions_with_blind
 
 
 def sources(tmp_path, monkeypatch):
@@ -293,8 +294,9 @@ def test_same_file_containment_is_filtered_before_scoring_but_siblings_and_other
     scored_pairs = []
     original_similarity = clones.clone_similarity
 
-    def embed(snippets):
-        observed_embeddings.extend(snippets)
+    def embed(snippets, text_transform=None):
+        if text_transform is None:  # the identifier-blind second pass embeds the same functions again
+            observed_embeddings.extend(snippets)
         return np.tile(np.array([1.0, 0.0]), (len(snippets), 1))
 
     def score(a, b):
@@ -514,3 +516,32 @@ def test_js_test_files_and_directories_are_not_corpus_functions(tmp_path, monkey
         path.write_text(body)
     corpus = overlaps.build_corpus(["src"])
     assert [f.record.file_path.as_posix() for f in corpus] == ["src/keep.js"]
+
+
+def _blind(source: str, symbol: str) -> str:
+    rows = collect_functions_with_blind(source, Path("x.js"))
+    [text] = [blind for record, _, blind in rows if record.symbol == symbol]
+    return text
+
+
+def test_blind_js_a_renamed_copy_becomes_identical_but_literals_stay():
+    original = "function total(items, rate) { const out = fetchAll(items.list, rate); return out.sum * rate + 10; }\n"
+    renamed = "function amount(rows, k) { const res = loadRows(rows.data, k); return res.cost * k + 10; }\n"
+    assert _blind(original, "total") == _blind(renamed, "amount")
+    assert _blind(original, "total") == "function v0(v1, v2) { const v3 = v4(v1.v5, v2); return v3.v6 * v2 + 10; }"
+    assert _blind(original, "total") != _blind(renamed.replace("10", "11"), "amount")
+
+
+def test_blind_js_same_identifiers_with_different_structure_stay_different():
+    first = "function f(x, y) { return x + y; }\n"
+    second = "function f(x, y) { return y ? x * y : x; }\n"
+    assert _blind(first, "f") != _blind(second, "f")
+
+
+def test_blind_js_a_function_and_its_own_call_site_are_not_identical():
+    source = (
+        "function apply(plan, store) { store.write(plan.items, plan.mode); return plan.mode; }\n"
+        "function run(plan, store) { return apply(plan, store); }\n"
+    )
+    assert _blind(source, "apply") != _blind(source, "run")
+    assert "apply" not in _blind(source, "run")

@@ -87,15 +87,18 @@ def cached(
     """Wrap ``embed`` so unchanged sources are read from the cache and only misses are encoded.
 
     ``identity`` must pin everything that can change a vector; ``None`` means it cannot be pinned, so the
-    encoder is returned unwrapped and nothing is persisted.
+    encoder is called directly and nothing is persisted. The returned callable takes an optional
+    ``text_transform`` id (how the caller preprocessed the texts, e.g. identifier-blind); it is part of the key, so
+    vectors of differently transformed texts never mix. ``None`` (plain text) keeps the key of earlier versions.
     """
     if identity is None:
-        return embed
-    key = hashlib.sha256(json.dumps({**identity, "dim": dim}, sort_keys=True).encode()).hexdigest()
+        return lambda sources, text_transform=None: embed(sources)
 
-    def embed_cached(sources: list[str]) -> np.ndarray:
+    def embed_cached(sources: list[str], text_transform: str | None = None) -> np.ndarray:
         if not sources:
             return embed(sources)
+        pinned = {**identity, "dim": dim, **({"text_transform": text_transform} if text_transform else {})}
+        key = hashlib.sha256(json.dumps(pinned, sort_keys=True).encode()).hexdigest()
         hashes = [hashlib.sha256(s.encode("utf-8", "surrogatepass")).hexdigest() for s in sources]
         text = dict(zip(hashes, sources, strict=True))  # equal sources share one hash: encode once
         found = _lookup(key, list(text), dim)

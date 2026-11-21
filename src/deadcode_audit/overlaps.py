@@ -6,7 +6,9 @@ each pair once; strict same-file ancestor/descendant source-span pairs, e.g. a m
 pairs, a function and a caller that is only glue around it, are skipped);
 score = 0.6 * structural token similarity + 0.4 * API-name Jaccard.
 Pass 2 (CodeSage embed-only, default): each function's top-``_EMBED_TOPK`` cosine neighbours that pass 1 did
-not already report are added as type-4 (same behaviour, different code) candidates, ranked by cosine.
+not already report are added as type-4 (same behaviour, different code) candidates, ranked by cosine. A second
+embedding of the IDENTIFIER-BLIND text then keeps a candidate only if its blind cosine is at least the median blind
+cosine over the candidate list (Type-2 clone preprocessing: a function and its call site stop sharing the callee's name).
 The embedder is dependency-INJECTED (``overlap_embed.get_embedder``), so this module imports without
 torch/numpy and tests pass a fake embedder. If the model or its extras are missing, or loading/running it fails for any reason, ``run`` warns once
 and returns pass 1 only. On-demand only — never a gate, ``run`` always returns 0.
@@ -21,14 +23,16 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
+import statistics
 import sys
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import clones, config, diffscope, javascript, scan
+from deadcode_audit import blind, clones, config, diffscope, javascript, scan
 from deadcode_audit.framework import safe_parse
 
 if TYPE_CHECKING:
@@ -53,6 +57,7 @@ class _SourcedFunc:
 
     record: clones.FuncRecord
     source: str
+    blind_source: str = ""  # identifier-blind source (blind.py) for the second embedding signal; "" -> use ``source``
 
 
 @dataclass(frozen=True)
@@ -88,10 +93,11 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     selected = [path for path in selected if not (diffscope.is_test_path(path) or javascript.is_js_test_file(path))]
     for path in selected:
         if path.suffix in javascript.SUFFIXES:
-            from deadcode_audit.javascript_functions import collect_functions
+            from deadcode_audit.javascript_functions import collect_functions_with_blind
             source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
             try:
-                funcs.extend(_SourcedFunc(record, text) for record, text in collect_functions(source, path))
+                funcs.extend(_SourcedFunc(record, text, blind_text)
+                             for record, text, blind_text in collect_functions_with_blind(source, path))
             except SyntaxError:  # same policy as Python: one malformed file never aborts the audit
                 print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
@@ -110,7 +116,8 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
                                            end_byte=line_starts[node.end_lineno - 1] + node.end_col_offset,
                                            calls=clones.invocation_remainders(node, len(tokens)))
                 # Fail-open: a None segment (rare, position-less node) -> "" -> deterministic-only for this fn.
-                funcs.append(_SourcedFunc(record=record, source=ast.get_source_segment(source, node) or ""))
+                segment = ast.get_source_segment(source, node) or ""
+                funcs.append(_SourcedFunc(record=record, source=segment, blind_source=blind.python_blind(segment) or ""))
     return funcs
 
 
@@ -242,11 +249,14 @@ def find_embed_candidates(
     embed_fn: EmbedFn,
     known: list[OverlapPair],
     topk: int = _EMBED_TOPK,
+    identifier_blind: bool = True,
 ) -> list[OverlapPair]:
     """Pass 2 (embed-only): top-``topk`` cosine neighbours of each function that pass 1 did not report.
 
     Ranked by cosine, descending. ``combined``/``struct``/``api`` are the pass-1 sub-scores of the pair
-    (it fell below threshold or was removed by the api gate), shown for context only.
+    (it fell below threshold or was removed by the api gate), shown for context only. With ``identifier_blind``
+    (and blind source text on the functions) the candidate list is first cut by the blind-cosine median rule
+    (``_blind_median_cut``); the reported ``embed`` stays the plain cosine.
     """
     survivors = [f for f in funcs if len(f.record.tokens) >= min_tokens and f.source.strip()]
     if len(survivors) < 2:
@@ -262,7 +272,7 @@ def find_embed_candidates(
     reported = {_pair_keys(p) for p in known}
     mixed_metadata = any(f.record.language != "python" for f in funcs)
 
-    pairs: list[OverlapPair] = []
+    chosen: list[tuple[int, int]] = []
     seen: set[tuple[int, int]] = set()
     for i, row in enumerate(nearest):
         for j in (int(x) for x in row):
@@ -272,15 +282,32 @@ def find_embed_candidates(
             seen.add((low, high))
             if matrix[low, high] <= -2.0:  # masked: not comparable (other language pool / JS containment)
                 continue
-            first, second = survivors[low], survivors[high]
-            if frozenset((_key(first), _key(second))) in reported:
+            if frozenset((_key(survivors[low]), _key(survivors[high]))) in reported:
                 continue
-            api = clones.jaccard(first.record.semantic, second.record.semantic)
-            struct = clones.clone_similarity(list(first.record.tokens), list(second.record.tokens))
-            pairs.append(_pair(first, second, _combined(struct, api), struct, api, float(matrix[low, high]),
-                               identities=mixed_metadata))
+            chosen.append((low, high))
+    if identifier_blind and any(f.blind_source for f in survivors):
+        chosen = _blind_median_cut(chosen, survivors, embed_fn)
+    pairs: list[OverlapPair] = []
+    for low, high in chosen:
+        first, second = survivors[low], survivors[high]
+        api = clones.jaccard(first.record.semantic, second.record.semantic)
+        struct = clones.clone_similarity(list(first.record.tokens), list(second.record.tokens))
+        pairs.append(_pair(first, second, _combined(struct, api), struct, api, float(matrix[low, high]),
+                           identities=mixed_metadata))
     pairs.sort(key=lambda p: p.embed or 0.0, reverse=True)
     return pairs
+
+
+def _blind_median_cut(chosen: list[tuple[int, int]], survivors: list[_SourcedFunc],
+                      embed_fn: EmbedFn) -> list[tuple[int, int]]:
+    """RULE: keep a candidate pair iff the cosine of its identifier-blind texts is >= the MEDIAN of that cosine
+    over the whole candidate list (computed before the ``--top`` cut, no fixed number). Empty blind text -> plain source."""
+    if not chosen:
+        return chosen
+    vectors = embed_fn([f.blind_source or f.source for f in survivors], text_transform=blind.BLIND_ID)
+    scores = [float(vectors[low] @ vectors[high]) for low, high in chosen]
+    median = statistics.median(scores)
+    return [pair for pair, score in zip(chosen, scores, strict=True) if score >= median]
 
 
 def _pair_line(pair: OverlapPair) -> str:
@@ -361,9 +388,12 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
     embed_fn = None if no_embed else _load_embedder(model)
     all_pairs = find_overlaps(corpus, threshold=threshold, min_tokens=min_tokens)
     all_embed: list[OverlapPair] = []
+    # DEADCODE_NO_BLIND=1 (evaluation-only, undocumented for users) runs pass 2 without the identifier-blind cut.
+    use_blind = not os.environ.get("DEADCODE_NO_BLIND")
     if embed_fn is not None:
         try:
-            all_embed = find_embed_candidates(corpus, min_tokens=min_tokens, embed_fn=embed_fn, known=all_pairs)
+            all_embed = find_embed_candidates(corpus, min_tokens=min_tokens, embed_fn=embed_fn, known=all_pairs,
+                                              identifier_blind=use_blind)
         except Exception as error:  # noqa: BLE001 - a failing model run also falls back to pass 1
             _warn_embed_skipped(model, error)
             embed_fn = None
@@ -385,6 +415,7 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
             "functions_compared": eligible,
             "pairs_above_threshold": len(all_pairs),
             "embed_pairs_total": len(all_embed),
+            "identifier_blind": embed_active and use_blind,
             "min_tokens": min_tokens,
         }
         if embed_active:

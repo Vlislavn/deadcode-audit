@@ -194,3 +194,21 @@ def test_identity_bypasses_when_not_immutably_resolved(
 
 def test_pinned_revision_matching_loaded_model_is_cacheable() -> None:
     assert overlap_embed._identity("org/m", COMMIT, *_loaded(tokenizer_commit=None)) is not None
+
+
+def test_text_transform_is_part_of_the_key_so_plain_and_blind_vectors_never_mix(cache_home: Path) -> None:
+    plain = Encoder()
+    embed_cache.cached(plain, IDENTITY, DIM)(["def a(): pass"])
+    blind = Encoder()
+    embed_cache.cached(blind, IDENTITY, DIM)(["def a(): pass"], text_transform="identifier-blind-v1")
+    assert blind.seen == ["def a(): pass"]  # the same text is NOT served from the plain entry
+    warm = Encoder()
+    embed_cache.cached(warm, IDENTITY, DIM)(["def a(): pass"], text_transform="identifier-blind-v1")
+    embed_cache.cached(warm, IDENTITY, DIM)(["def a(): pass"])
+    assert warm.seen == []
+    with sqlite3.connect(cache_home) as conn:
+        assert conn.execute("SELECT COUNT(DISTINCT identity) FROM vectors").fetchone() == (2,)
+
+
+def test_unpinnable_identity_accepts_and_ignores_text_transform() -> None:
+    assert embed_cache.cached(Encoder(), None, DIM)(["a"], text_transform="x").shape == (1, DIM)

@@ -32,6 +32,7 @@
 - Remove an overwritten partial detector definition that broke the package's native lint gate; add a duplicate-definition regression contract.
 - `deadcode overlaps` is now two-pass by default: pass 1 deterministic struct+API (unchanged), pass 2 CodeSage-small-v2 (pinned revision, embed-only) adds type-4 candidates as `embed_pairs`. Falls back to pass 1 with one warning when the model or extras are missing; `--no-embed` skips pass 2.
 - `overlaps` skips call-site pairs (a function and a caller that is only glue around it: its own body minus the invoking statement is below `--min-tokens`; JS/TS incl. JSX components and import aliases, Python via ast) and now excludes test files (`*.test.js(x)`, `*.testkit.js(x)`, `testSetup.js`, `__tests__/`, `tests/`) even for explicit paths.
+- `overlaps` pass 2 (Python and JS/TS): a second embedding of identifier-blind text (every identifier, property and called name renamed v0,v1,… per function by first appearance; literals kept) keeps a candidate only if its blind cosine is >= the median blind cosine over the candidate list. A function and its call site stop matching on the shared callee name; on the 232-file JS frontend corpus it drops 17 of 21 hand-labeled false positives and keeps all 9 real findings; adds ~1 embedding pass of time. Recall in the tail of the list is unmeasured. Evaluation-only switch: `DEADCODE_NO_BLIND=1`; the embedding cache is keyed by the text transform.
 - `growth --hotspots` also treats `*.testkit.js(x)` as test files (shared `javascript.is_js_test_file`).
 
 ### Removed

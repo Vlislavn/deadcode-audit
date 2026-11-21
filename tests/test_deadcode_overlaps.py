@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from deadcode_audit import clones, overlap_embed, overlaps
+from deadcode_audit import blind, clones, overlap_embed, overlaps
 from deadcode_audit.cli import main
 from fixtures.deadcode_cli import run_deadcode_cli
 
@@ -337,3 +337,62 @@ def test_python_test_paths_are_excluded_from_explicit_targets(tmp_path: Path, mo
     (tmp_path / "src" / "test_m.py").write_text("def skipped_by_name(x):\n    return x\n")
     (tmp_path / "src" / "tests" / "helper.py").write_text("def skipped_by_dir(x):\n    return x\n")
     assert [f.record.symbol for f in overlaps.build_corpus(["src"])] == ["kept"]
+
+
+# --- identifier-blind second signal (V3iii) ---
+
+
+def test_blind_python_a_renamed_copy_becomes_identical_but_literals_stay() -> None:
+    original = "def total(items, rate):\n    return sum(i.price for i in items) * rate + 10\n"
+    renamed = "def amount(rows, factor):\n    return sum(r.cost for r in rows) * factor + 10\n"
+    other_literal = renamed.replace("10", "11")
+    assert blind.python_blind(original) == blind.python_blind(renamed)
+    assert blind.python_blind(original) == "def v0(v1, v2):\n    return v3(v4.v5 for v4 in v1) * v2 + 10\n"
+    assert blind.python_blind(original) != blind.python_blind(other_literal)
+
+
+def test_blind_python_same_identifiers_with_different_structure_stay_different() -> None:
+    first = "def f(x, y):\n    return x + y\n"
+    second = "def f(x, y):\n    return x * y if y else x\n"
+    assert blind.python_blind(first) != blind.python_blind(second)
+
+
+def test_blind_python_a_function_and_its_own_call_site_are_not_identical() -> None:
+    callee = "def apply(plan, store):\n    store.write(plan.items, plan.mode)\n    return plan.mode\n"
+    caller = "def run(plan, store):\n    return apply(plan, store)\n"
+    assert blind.python_blind(callee) != blind.python_blind(caller)
+    # sharing the callee's NAME is what made them look alike; without it the texts no longer contain it
+    assert "apply" not in blind.python_blind(caller)
+
+
+def test_blind_python_untokenizable_source_is_none() -> None:
+    assert blind.python_blind("def f(:\n  '''") is None
+
+
+def _blind_candidates(identifier_blind: bool) -> list[overlaps.OverlapPair]:
+    # Plain texts are all identical (cosine 1.0 for every pair); blind texts sit at angles 0/10/25/60 degrees, so the
+    # six blind cosines are all different: ab .985, bc .966, ac .906, cd .819, bd .643, ad .500; median .8625.
+    angles = {"b0": 0, "b1": 10, "b2": 25, "b3": 60}
+
+    def embed(sources: list[str], text_transform: str | None = None) -> np.ndarray:
+        if text_transform is None:
+            return np.tile([1.0, 0.0], (len(sources), 1))
+        assert text_transform == blind.BLIND_ID
+        return np.array([[np.cos(np.radians(angles[s])), np.sin(np.radians(angles[s]))] for s in sources])
+
+    funcs = [
+        overlaps._SourcedFunc(
+            clones.FuncRecord(Path("src/x.py"), i + 1, name, _TOK, _SEM), source=f"p{i}", blind_source=f"b{i}"
+        )
+        for i, name in enumerate("abcd")
+    ]
+    return overlaps.find_embed_candidates(
+        funcs, min_tokens=1, embed_fn=embed, known=[], topk=3, identifier_blind=identifier_blind
+    )
+
+
+def test_blind_median_rule_keeps_pairs_at_or_above_the_median_blind_cosine() -> None:
+    kept = _blind_candidates(True)
+    assert {(p.a_symbol, p.b_symbol) for p in kept} == {("a", "b"), ("b", "c"), ("a", "c")}
+    assert all(p.embed == pytest.approx(1.0) for p in kept)  # the reported cosine stays the plain one
+    assert len(_blind_candidates(False)) == 6

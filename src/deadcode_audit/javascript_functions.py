@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 
+from deadcode_audit.blind import rename
 from deadcode_audit.clones import FuncRecord, semantic_signature
 
 PARSER_VERSION = "0.25.2"
@@ -18,6 +19,16 @@ _FUNCTION_TYPES = frozenset(
         "generator_function",
         "arrow_function",
         "method_definition",
+    }
+)
+# Identifier leaves renamed in the identifier-blind text (blind.py RULE): names, properties, shorthand properties.
+_IDENTIFIER_LEAF_TYPES = frozenset(
+    {
+        "identifier",
+        "property_identifier",
+        "shorthand_property_identifier",
+        "shorthand_property_identifier_pattern",
+        "private_property_identifier",
     }
 )
 _DECLARATION_FUNCTION_TYPES = frozenset(
@@ -647,12 +658,28 @@ def _import_aliases(root, buffer: bytes) -> dict[str, str]:
     return aliases
 
 
+def _blind_text(function_node, buffer: bytes) -> str:
+    """The function's source with every identifier leaf renamed by first appearance (see ``blind.py``)."""
+    leaves, pending = [], [function_node]
+    while pending:
+        node = pending.pop()
+        if node.type in _IDENTIFIER_LEAF_TYPES:
+            leaves.append((node.start_byte, node.end_byte))
+        pending.extend(reversed(node.children))
+    return rename(buffer, function_node.start_byte, function_node.end_byte, leaves)
+
+
 def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
     """Extract executable JS/TS functions and exact UTF-8 source spans for clone analysis.
 
     The whole captured buffer is parsed and validated before any records are returned. This
     function does not execute source or load model weights; it only builds syntax fingerprints.
     """
+    return [(record, snippet) for record, snippet, _ in collect_functions_with_blind(source, path)]
+
+
+def collect_functions_with_blind(source: str, path: Path) -> list[tuple[FuncRecord, str, str]]:
+    """``collect_functions`` rows plus each function's identifier-blind text as a third item."""
     buffer = source.encode("utf-8")
     parser, typescript = _load_parser(path)
     tree, analysed = _repair_jsx_ampersands(parser, buffer)
@@ -692,5 +719,5 @@ def collect_functions(source: str, path: Path) -> list[tuple[FuncRecord, str]]:
             calls=_invocation_remainders(node, analysed, sizes, len(token_tuple), aliases),
         )
         snippet = buffer[node.start_byte : node.end_byte].decode("utf-8")
-        records.append((record, snippet))
+        records.append((record, snippet, _blind_text(node, buffer)))
     return records
