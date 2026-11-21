@@ -12,6 +12,7 @@
 - `growth --base BASE --head HEAD`: size and churn of changed non-test Python files, ported from agent-skills. JSON includes counts, deltas, exclusions and AST-unknown locators. No model, checkout, score change or new blocking threshold.
 - Mixed Python/JS/TS scan/CI and function overlaps with exact source identities (`javascript` extra; Oxlint 1.90.0, Tree-sitter 0.25.2 pinned to avoid reproduced 0.26.0 native corruption). Python-only results unchanged; no JS dead-export/Markdown/mutation claim.
 - Overlaps skip strict same-file JS/TS ancestor/descendant source-span pairs and compare within one language pool; siblings, cross-file pairs and embedding inputs are kept.
+- Optional `javascript/duplicate-code` (warning) in `scan`/`ci`: with a pinned local jscpd 5.4.3 (`DEADCODE_JSCPD`, MIT, invoked not vendored) one finding per cluster of exact JS/JSX token clones (≥50 tokens, ≥5 lines, tests excluded). Skipped with one stderr note when jscpd is absent or another version; Oxlint checks unchanged.
 
 ### Fixed
 - `ai-slop/redundant-try-catch`: a bare `raise` handler followed by a later handler that could catch the same error (bare/`Exception`/builtin supertype, or unresolvable) shields it and is no longer reported.

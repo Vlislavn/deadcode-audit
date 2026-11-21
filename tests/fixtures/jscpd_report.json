@@ -1,0 +1,439 @@
+{
+ "duplicates": [
+  {
+   "firstFile": {
+    "end": 65,
+    "endLoc": {
+     "column": 15,
+     "line": 65,
+     "position": 2247
+    },
+    "name": "api/client.js",
+    "start": 54,
+    "startLoc": {
+     "column": 2,
+     "line": 54,
+     "position": 1981
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 12,
+   "secondFile": {
+    "end": 25,
+    "endLoc": {
+     "column": 15,
+     "line": 25,
+     "position": 925
+    },
+    "name": "api/libraryApi.js",
+    "start": 14,
+    "startLoc": {
+     "column": 2,
+     "line": 14,
+     "position": 659
+    }
+   },
+   "tokens": 72
+  },
+  {
+   "firstFile": {
+    "end": 13,
+    "endLoc": {
+     "column": 7,
+     "line": 13,
+     "position": 452
+    },
+    "name": "api/dailyApi.js",
+    "start": 5,
+    "startLoc": {
+     "column": 19,
+     "line": 5,
+     "position": 231
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 9,
+   "secondFile": {
+    "end": 12,
+    "endLoc": {
+     "column": 7,
+     "line": 12,
+     "position": 390
+    },
+    "name": "api/reviewApi.js",
+    "start": 4,
+    "startLoc": {
+     "column": 32,
+     "line": 4,
+     "position": 169
+    }
+   },
+   "tokens": 59
+  },
+  {
+   "firstFile": {
+    "end": 38,
+    "endLoc": {
+     "column": 1,
+     "line": 38,
+     "position": 1132
+    },
+    "name": "api/dailyApi.js",
+    "start": 8,
+    "startLoc": {
+     "column": 42,
+     "line": 8,
+     "position": 321
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 31,
+   "secondFile": {
+    "end": 48,
+    "endLoc": {
+     "column": 1,
+     "line": 48,
+     "position": 1660
+    },
+    "name": "api/settingsApi.js",
+    "start": 18,
+    "startLoc": {
+     "column": 30,
+     "line": 18,
+     "position": 849
+    }
+   },
+   "tokens": 188
+  },
+  {
+   "firstFile": {
+    "end": 62,
+    "endLoc": {
+     "column": 21,
+     "line": 62,
+     "position": 2343
+    },
+    "name": "api/dailyApi.js",
+    "start": 12,
+    "startLoc": {
+     "column": 2,
+     "line": 12,
+     "position": 430
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 51,
+   "secondFile": {
+    "end": 53,
+    "endLoc": {
+     "column": 21,
+     "line": 53,
+     "position": 1675
+    },
+    "name": "api/goldenApi.js",
+    "start": 21,
+    "startLoc": {
+     "column": 2,
+     "line": 21,
+     "position": 845
+    }
+   },
+   "tokens": 165
+  },
+  {
+   "firstFile": {
+    "end": 32,
+    "endLoc": {
+     "column": 28,
+     "line": 32,
+     "position": 1028
+    },
+    "name": "api/dailyApi.js",
+    "start": 14,
+    "startLoc": {
+     "column": 22,
+     "line": 14,
+     "position": 488
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 19,
+   "secondFile": {
+    "end": 31,
+    "endLoc": {
+     "column": 28,
+     "line": 31,
+     "position": 966
+    },
+    "name": "api/reviewApi.js",
+    "start": 13,
+    "startLoc": {
+     "column": 15,
+     "line": 13,
+     "position": 426
+    }
+   },
+   "tokens": 118
+  },
+  {
+   "firstFile": {
+    "end": 87,
+    "endLoc": {
+     "column": 27,
+     "line": 87,
+     "position": 4516
+    },
+    "name": "components/paper/DeepReviewSection.jsx",
+    "start": 80,
+    "startLoc": {
+     "column": 42,
+     "line": 80,
+     "position": 4222
+    }
+   },
+   "format": "jsx",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 8,
+   "secondFile": {
+    "end": 105,
+    "endLoc": {
+     "column": 27,
+     "line": 105,
+     "position": 6096
+    },
+    "name": "pages/PaperReviewPage.jsx",
+    "start": 99,
+    "startLoc": {
+     "column": 48,
+     "line": 99,
+     "position": 5818
+    }
+   },
+   "tokens": 61
+  },
+  {
+   "firstFile": {
+    "end": 106,
+    "endLoc": {
+     "column": 6,
+     "line": 106,
+     "position": 5001
+    },
+    "name": "components/paper/PaperDetailView/index.jsx",
+    "start": 95,
+    "startLoc": {
+     "column": 4,
+     "line": 95,
+     "position": 4610
+    }
+   },
+   "format": "jsx",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 12,
+   "secondFile": {
+    "end": 35,
+    "endLoc": {
+     "column": 8,
+     "line": 35,
+     "position": 1828
+    },
+    "name": "components/paper/review/ActionRail.jsx",
+    "start": 24,
+    "startLoc": {
+     "column": 6,
+     "line": 24,
+     "position": 1415
+    }
+   },
+   "tokens": 72
+  },
+  {
+   "firstFile": {
+    "end": 246,
+    "endLoc": {
+     "column": 40,
+     "line": 246,
+     "position": 10554
+    },
+    "name": "offlineStore.js",
+    "start": 240,
+    "startLoc": {
+     "column": 99,
+     "line": 240,
+     "position": 10266
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 7,
+   "secondFile": {
+    "end": 295,
+    "endLoc": {
+     "column": 40,
+     "line": 295,
+     "position": 12890
+    },
+    "name": "offlineStore.js",
+    "start": 289,
+    "startLoc": {
+     "column": 44,
+     "line": 289,
+     "position": 12602
+    }
+   },
+   "tokens": 69
+  },
+  {
+   "firstFile": {
+    "end": 246,
+    "endLoc": {
+     "column": 40,
+     "line": 246,
+     "position": 10554
+    },
+    "name": "offlineStore.js",
+    "start": 240,
+    "startLoc": {
+     "column": 100,
+     "line": 240,
+     "position": 10267
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 7,
+   "secondFile": {
+    "end": 461,
+    "endLoc": {
+     "column": 40,
+     "line": 461,
+     "position": 21228
+    },
+    "name": "offlineStore.js",
+    "start": 455,
+    "startLoc": {
+     "column": 33,
+     "line": 455,
+     "position": 20941
+    }
+   },
+   "tokens": 68
+  },
+  {
+   "firstFile": {
+    "end": 296,
+    "endLoc": {
+     "column": 9,
+     "line": 296,
+     "position": 12900
+    },
+    "name": "offlineStore.js",
+    "start": 291,
+    "startLoc": {
+     "column": 41,
+     "line": 291,
+     "position": 12675
+    }
+   },
+   "format": "javascript",
+   "isNew": false,
+   "kind": "exact",
+   "lines": 6,
+   "secondFile": {
+    "end": 462,
+    "endLoc": {
+     "column": 9,
+     "line": 462,
+     "position": 21238
+    },
+    "name": "offlineStore.js",
+    "start": 457,
+    "startLoc": {
+     "column": 41,
+     "line": 457,
+     "position": 21013
+    }
+   },
+   "tokens": 50
+  }
+ ],
+ "statistics": {
+  "detectionDate": "2026-11-21T10:08:37.526Z",
+  "formats": {
+   "css": {
+    "clones": 0,
+    "duplicatedLines": 0,
+    "duplicatedTokens": 0,
+    "lines": 98,
+    "newClones": 0,
+    "newDuplicatedLines": 0,
+    "percentage": 0.0,
+    "percentageTokens": 0.0,
+    "sources": 1,
+    "tokens": 2297
+   },
+   "javascript": {
+    "clones": 8,
+    "duplicatedLines": 142,
+    "duplicatedTokens": 789,
+    "lines": 6698,
+    "newClones": 0,
+    "newDuplicatedLines": 0,
+    "percentage": 2.1200358315915198,
+    "percentageTokens": 1.5391818341429158,
+    "sources": 74,
+    "tokens": 51261
+   },
+   "json": {
+    "clones": 0,
+    "duplicatedLines": 0,
+    "duplicatedTokens": 0,
+    "lines": 29,
+    "newClones": 0,
+    "newDuplicatedLines": 0,
+    "percentage": 0.0,
+    "percentageTokens": 0.0,
+    "sources": 1,
+    "tokens": 91
+   },
+   "jsx": {
+    "clones": 2,
+    "duplicatedLines": 20,
+    "duplicatedTokens": 133,
+    "lines": 17244,
+    "newClones": 0,
+    "newDuplicatedLines": 0,
+    "percentage": 0.1159823706796567,
+    "percentageTokens": 0.08982298793130229,
+    "sources": 155,
+    "tokens": 148069
+   }
+  },
+  "total": {
+   "clones": 10,
+   "duplicatedLines": 162,
+   "duplicatedTokens": 922,
+   "lines": 24069,
+   "newClones": 0,
+   "newDuplicatedLines": 0,
+   "percentage": 0.6730649383023807,
+   "percentageTokens": 0.4570737366025838,
+   "sources": 231,
+   "tokens": 201718
+  }
+ }
+}

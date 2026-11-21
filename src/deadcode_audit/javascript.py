@@ -1,4 +1,4 @@
-"""Pinned local Oxlint adapter; quality findings, never proof of dead exports."""
+"""Pinned local Oxlint adapter (+ optional pinned jscpd); quality findings, never proof of dead exports."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -19,6 +20,11 @@ from deadcode_audit.diagnostic import (
 
 SUFFIXES = frozenset({".js", ".cjs", ".mjs", ".jsx", ".ts", ".cts", ".mts", ".tsx"})
 OXLINT_VERSION = "1.90.0"
+JSCPD_VERSION = "5.4.3"
+JSCPD_EMPTY_WARNING = "Warning: jscpd analyzed no files"  # every input below the token floor: not a failure
+JS_JSX_SUFFIXES = (".js", ".jsx")
+# JS test/helper files: not production code, so duplication and hotspot ranking skip them.
+TEST_FILE_SUFFIXES = (".test.js", ".test.jsx", ".testkit.js", ".testkit.jsx", "testSetup.js")
 BATCH_FILES = 128
 SAFETY_DEFAULT_SECONDS = 60
 SAFETY_MAX_SECONDS = 120
@@ -46,7 +52,7 @@ _RULES = {
         "Fix JavaScript/TypeScript syntax before relying on analysis.",
     ),
 }
-RULE_SPECS = tuple(
+_OXLINT_SPECS = tuple(
     RuleSpec(
         rule=rule,
         engine=ENGINE_CODE_QUALITY,
@@ -56,9 +62,22 @@ RULE_SPECS = tuple(
     )
     for rule, severity, help_text in _RULES.values()
 )
+DUPLICATE_RULE = RuleSpec(
+    rule="javascript/duplicate-code",
+    engine=ENGINE_CODE_QUALITY,
+    default_severity=Severity.WARNING,
+    category="Duplication",
+    help="The same block is copied in several places; extract it once and reuse it, or confirm the copies must diverge.",
+)
+RULE_SPECS = (*_OXLINT_SPECS, DUPLICATE_RULE)
 
 
-def _run(executable: str, arguments: list[str]) -> subprocess.CompletedProcess:
+def is_js_test_file(path: Path) -> bool:
+    """``*.test.js(x)``, ``*.testkit.js(x)``, ``testSetup.js`` and anything under ``__tests__/`` (Python tests: ``diffscope.is_test_path``)."""
+    return "__tests__" in path.parts or path.name.endswith(TEST_FILE_SUFFIXES)
+
+
+def _run(executable: str, arguments: list[str], tool: str = "Oxlint", cwd: Path | None = None, tolerated: str = "") -> subprocess.CompletedProcess:
     safety = int(
         os.environ.get("DEADCODE_JS_SAFETY_SECONDS", str(SAFETY_DEFAULT_SECONDS))
     )
@@ -68,7 +87,7 @@ def _run(executable: str, arguments: list[str]) -> subprocess.CompletedProcess:
         )
     result = subprocess.run(
         [executable, *arguments],
-        cwd=diffscope.REPO_ROOT,
+        cwd=cwd or diffscope.REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -79,9 +98,9 @@ def _run(executable: str, arguments: list[str]) -> subprocess.CompletedProcess:
         len(result.stdout.encode()) > MAX_REPLY_BYTES
         or len(result.stderr.encode()) > MAX_REPLY_BYTES
     ):
-        raise ValueError("Oxlint reply exceeds the bounded batch size")
-    if result.stderr.strip():
-        raise ValueError("Oxlint returned unexpected stderr; analysis is not complete")
+        raise ValueError(f"{tool} reply exceeds the bounded batch size")
+    if any(line.strip() and not (tolerated and line.startswith(tolerated)) for line in result.stderr.splitlines()):
+        raise ValueError(f"{tool} returned unexpected stderr; analysis is not complete")
     return result
 
 
@@ -244,9 +263,124 @@ def run(files: list[Path]) -> list[Diagnostic]:
                 path: captured[path] for path in paths[start : start + BATCH_FILES]
             }
             findings.extend(_batch(executable, config_path, inputs))
+    findings.extend(_duplicates(captured))
     if any(
         (diffscope.REPO_ROOT / path).read_bytes() != raw
         for path, raw in captured.items()
     ):
         raise ValueError("JS source changed during analysis; no findings are accepted")
     return findings
+
+
+def _jscpd_executable() -> str | None:
+    """The pinned jscpd, or ``None`` after ONE stderr note: the adapter is optional."""
+    requested = os.environ.get("DEADCODE_JSCPD")
+    try:
+        executable = shutil.which(requested) if requested else None
+        if executable is None:
+            raise ValueError("DEADCODE_JSCPD does not name an executable")
+        result = _run(executable, ["--version"], "jscpd")
+        if result.returncode != 0 or result.stdout.strip() != f"jscpd {JSCPD_VERSION}":
+            raise ValueError(f"exactly jscpd {JSCPD_VERSION} is required")
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print(f"note: javascript/duplicate-code skipped ({error}); set DEADCODE_JSCPD to jscpd {JSCPD_VERSION}", file=sys.stderr)
+        return None
+    return executable
+
+
+def _range(side: object, inputs: dict[str, bytes]) -> tuple[str, int, int]:
+    """One clone side as ``(repo-relative path, first line, last line)``; jscpd ran with ``--absolute``."""
+    name = side.get("name") if isinstance(side, dict) else None
+    start, end = (side.get(key) for key in ("start", "end")) if isinstance(side, dict) else (None, None)
+    if not isinstance(name, str) or type(start) is not int or type(end) is not int:
+        raise ValueError("jscpd clone location is malformed")
+    path = Path(name).resolve()
+    relative = path.relative_to(diffscope.REPO_ROOT).as_posix() if path.is_relative_to(diffscope.REPO_ROOT) else None
+    if relative not in inputs:
+        raise ValueError("jscpd reported a file outside the explicit batch")
+    if not 1 <= start <= end <= inputs[relative].count(b"\n") + 1:
+        raise ValueError("jscpd location is outside the captured input")
+    return relative, start, end
+
+
+def _clusters(report: object, inputs: dict[str, bytes]) -> list[tuple[list[tuple[str, int, int]], int, int]]:
+    """Clones joined transitively when they share a file range: ``(locations, lines, tokens)`` per cluster."""
+    rows = report.get("duplicates") if isinstance(report, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("jscpd duplicates must be an array")
+    clones = []
+    for row in rows:
+        lines, tokens = (row.get(key) if isinstance(row, dict) else None for key in ("lines", "tokens"))
+        if type(lines) is not int or type(tokens) is not int:
+            raise ValueError("jscpd clone size is malformed")
+        clones.append((_range(row.get("firstFile"), inputs), _range(row.get("secondFile"), inputs), lines, tokens))
+    parent: dict[tuple[str, int, int], tuple[str, int, int]] = {}
+
+    def find(node):
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = node = parent[parent[node]]
+        return node
+
+    for first, second, _, _ in clones:
+        parent[find(first)] = find(second)
+    ordered = sorted(parent)
+    for before, after in zip(ordered, ordered[1:]):  # overlapping ranges of one file are one location
+        if before[0] == after[0] and after[1] <= before[2]:
+            parent[find(after)] = find(before)
+    groups: dict[tuple[str, int, int], list] = {}
+    for first, _, lines, tokens in clones:
+        group = groups.setdefault(find(first), [set(), 0, 0])
+        group[1], group[2] = max((group[1], group[2]), (lines, tokens))
+    for node in parent:
+        groups[find(node)][0].add(node)
+    return sorted(([_merge(group[0]), group[1], group[2]] for group in groups.values()), key=lambda c: c[0][0])
+
+
+def _merge(ranges: set) -> list[tuple[str, int, int]]:
+    merged: list[tuple[str, int, int]] = []
+    for path, start, end in sorted(ranges):
+        if merged and merged[-1][0] == path and start <= merged[-1][2]:
+            merged[-1] = (path, merged[-1][1], max(end, merged[-1][2]))
+        else:
+            merged.append((path, start, end))
+    return merged
+
+
+def _duplicate_diagnostics(report: object, inputs: dict[str, bytes]) -> list[Diagnostic]:
+    findings = []
+    for (first, *others), lines, tokens in _clusters(report, inputs):
+        also = ", ".join(f"{path}:{start}-{end}" for path, start, end in others)
+        findings.append(Diagnostic(
+            file_path=first[0],
+            engine=DUPLICATE_RULE.engine,
+            rule=DUPLICATE_RULE.rule,
+            severity=DUPLICATE_RULE.default_severity,
+            message=f"Code block duplicated in {len(others) + 1} places (largest clone {lines} lines, {tokens} tokens); also at {also}",
+            line=first[1],
+            help=DUPLICATE_RULE.help,
+            category=DUPLICATE_RULE.category,
+            detail=f"jscpd {JSCPD_VERSION}; exact token clones (min 50 tokens, 5 lines); advisory, not proof of a defect",
+        ))
+    return findings
+
+
+def _duplicates(captured: dict[str, bytes]) -> list[Diagnostic]:
+    """Optional jscpd pass over non-test JS/JSX: one finding per transitive clone cluster."""
+    inputs = {path: raw for path, raw in captured.items()
+              if path.endswith(JS_JSX_SUFFIXES) and not is_js_test_file(Path(path)) and not diffscope.is_test_path(Path(path))}
+    executable = _jscpd_executable() if inputs else None
+    if executable is None:
+        return []
+    with tempfile.TemporaryDirectory(prefix="deadcode-jscpd-") as temporary:
+        # Absolute inputs (jscpd's own names are relative to an unspecified common root) and a scratch cwd:
+        # a target .jscpd.json is never read, so it cannot change the verdict.
+        result = _run(executable, [
+            "--cross-formats", "javascript,jsx", "--min-tokens", "50", "--min-lines", "5", "--absolute", "--no-gitignore",
+            "--reporters", "json", "--output", temporary, "--silent",
+            *(str(diffscope.REPO_ROOT / path) for path in sorted(inputs)),
+        ], "jscpd", Path(temporary), JSCPD_EMPTY_WARNING)
+        if result.returncode != 0:
+            raise ValueError("jscpd process failed instead of completing analysis")
+        report = json.loads((Path(temporary) / "jscpd-report.json").read_text(encoding="utf-8"), object_pairs_hook=_unique)
+    return _duplicate_diagnostics(report, inputs)
