@@ -40,7 +40,7 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 
 | Goal | Command |
 |---|---|
-| Findings and score | `deadcode scan [paths...] [--json]` — Python plus JS/TS (`javascript` extra + Oxlint) |
+| Findings and score | `deadcode scan [paths...] [--json]` — Python plus JS/TS (`javascript` extra + Oxlint); advisory `code-quality/query-with-effects` flags query-named functions that write |
 | Enforce quality policy | `deadcode ci --json` — exit 1 on errors or score below threshold |
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory; also `reachability/duplicate-constant` (same module-level string constant in 2+ modules) |

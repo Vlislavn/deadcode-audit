@@ -327,3 +327,63 @@ def test_generalisation_many_defaulted_params_does_not_fire() -> None:
 def test_positional_only_required_params_fire() -> None:
     src = "def posonly(a, b, c, d, e, f, g, /):\n    return 0\n"
     assert _PARAMS in _rule_ids(src)
+
+
+# --------------------------------------------------------------------------------------
+# code-quality/query-with-effects
+# --------------------------------------------------------------------------------------
+
+_CQS = "code-quality/query-with-effects"
+
+
+def _cqs_hits(source: str) -> list[str | None]:
+    return _details_for(source, _CQS)
+
+
+def test_query_with_effects_flags_get_handler_that_records_and_commits() -> None:
+    src = "def get_daily(db):\n    items = load(db)\n    today_exposure.record_slate(items)\n    return items\n"
+    assert _cqs_hits(src) == [".record_slate()"]
+    daily = "async def get_daily(k):\n    s = await asyncio.to_thread(today_exposure.record_slate, p, k=k)\n    return s\n"
+    assert _cqs_hits(daily) == ["record_slate passed as callback"]
+    assert _cqs_hits("def has_seen(conn):\n    conn.commit()\n    return True\n") == [".commit()"]
+
+
+def test_query_with_effects_flags_predicate_that_writes_a_file() -> None:
+    assert _cqs_hits("def is_ready(p):\n    p.write_text('x')\n    return True\n") == [".write_text()"]
+    assert _cqs_hits("def can_run(p):\n    with open(p, 'w') as f:\n        f.write('x')\n") == ["open(..., write mode)"]
+    assert _cqs_hits("def find_x(c):\n    c.execute('insert into t values (1)')\n") == [".execute(write SQL)"]
+    assert _cqs_hits("def check_x(u):\n    requests.post(u)\n") == ["requests.post()"]
+    assert _cqs_hits("def _load_x(p):\n    p.unlink()\n") == [".unlink()"]
+
+
+def test_query_with_effects_flags_atomic_and_json_file_writes() -> None:
+    assert _cqs_hits("def load_x(p):\n    write_json_atomic(p, {})\n") == ["write_json_atomic()"]
+    assert _cqs_hits("def load_x(p):\n    atomic_write(p, 'x')\n") == ["atomic_write()"]
+    assert _cqs_hits("def get_x(p):\n    dump_json(p, {})\n") == ["dump_json()"]
+    assert _cqs_hits("def get_x(p):\n    io.write_text_atomic(p, 'x')\n") == [".write_text_atomic()"]
+
+
+def test_query_with_effects_silent_on_memoizers_and_non_query_names() -> None:
+    memo = "def get_or_compute_embedding(c, k):\n    v = c.get(k)\n    c.execute('INSERT INTO e VALUES (?)', (v,))\n    c.commit()\n"
+    assert _cqs_hits(memo) == []
+    batch = "def get_or_compute_embeddings_batch(c):\n    save_all(c)\n"
+    assert _cqs_hits(batch) == []
+    assert _cqs_hits("def get_or_compute_x(p):\n    write_json_atomic(p, {})\n") == []
+    assert _cqs_hits("def get_x(p):\n    return read_json(p)\n") == []
+    assert _cqs_hits("def save_x(c):\n    c.commit()\n    record_it(c)\n") == []
+    assert _cqs_hits("def ensure_x(p):\n    p.write_text('x')\n") == []
+    assert _cqs_hits("class A:\n    def __getattr__(self, n):\n        self.commit()\n") == []
+
+
+def test_query_with_effects_silent_on_pure_reads_and_nested_scopes() -> None:
+    reads = (
+        "def get_x(c, p):\n"
+        "    c.execute('SELECT 1')\n"
+        "    open(p)\n"
+        "    open(p, 'r')\n"
+        "    p.read_text()\n"
+        "    return requests.get(p)\n"
+    )
+    assert _cqs_hits(reads) == []
+    nested = "def get_x(c):\n    def _w():\n        c.commit()\n    return _w\n"
+    assert _cqs_hits(nested) == []

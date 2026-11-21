@@ -1,5 +1,7 @@
 """Complexity / size detectors: oversized functions, oversized files, deep nesting, param bloat.
 
+A fifth, advisory rule (``query-with-effects``) flags query-named functions that write (CQS).
+
 These four rules encode *structural* maintainability principles that AI-generated code routinely
 violates: monolithic functions, sprawling files, arrow-shaped nesting, and parameter-list bloat.
 Every threshold is a module-level constant (tunable, not an inline magic literal), and every rule is
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import io
+import re
 import tokenize
 from typing import TYPE_CHECKING
 
@@ -97,12 +100,35 @@ SPEC_TOO_MANY_PARAMS = RuleSpec(
     ),
 )
 
+SPEC_QUERY_WITH_EFFECTS = RuleSpec(
+    rule="code-quality/query-with-effects",
+    engine=ENGINE_CODE_QUALITY,
+    default_severity=Severity.WARNING,
+    category="Complexity",
+    help=(
+        "A function named like a query (get_/is_/has_/can_/find_/read_/check_/list_/load_) performs a "
+        "write (DB write, commit, file write/unlink, HTTP mutation, record_/save_/persist_ call). "
+        "Separate the command from the query, or rename it (e.g. get_or_*, ensure_*)."
+    ),
+)
+
 rules: tuple[RuleSpec, ...] = (
     SPEC_FUNCTION_TOO_LONG,
     SPEC_FILE_TOO_LARGE,
     SPEC_DEEP_NESTING,
     SPEC_TOO_MANY_PARAMS,
+    SPEC_QUERY_WITH_EFFECTS,
 )
+
+# --- query-with-effects vocabulary (command-query separation) ---
+_QUERY_NAME = re.compile(r"(get|is|has|can|find|read|check|list|load)_")
+_MEMOIZING_NAME = re.compile(r"(get_or_|ensure_)|_or_compute")  # justified lazy-create / cache-fill
+_WRITE_CALL_NAME = re.compile(r"(record|save|persist|append|insert)_|write_\w*_atomic|atomic_write|write_json|dump_json")
+_WRITE_SQL = re.compile(r"\s*(insert|update|delete|replace)\b", re.IGNORECASE)
+_WRITE_ATTRS = frozenset({"commit", "write_text", "write_bytes", "unlink"})
+_HTTP_VERBS = frozenset({"post", "put", "delete", "patch"})
+_HTTP_RECEIVERS = frozenset({"requests", "httpx", "session", "client", "http"})
+_WRITE_MODE_CHARS = frozenset("wax")
 
 
 # Token types that carry no code: structural/whitespace markers and comments. A physical line whose
@@ -234,6 +260,78 @@ def _check_too_many_params(func: ast.FunctionDef | ast.AsyncFunctionDef, ctx: Fi
     return None
 
 
+def _own_calls(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
+    """Calls in ``func``'s own body, not descending into nested defs/lambdas/classes (own scope each)."""
+    calls: list[ast.Call] = []
+    stack: list[ast.AST] = list(func.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (*_FUNC_TYPES, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Call):
+            calls.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return sorted(calls, key=lambda c: (c.lineno, c.col_offset))
+
+
+def _str_const(node: ast.expr | None) -> str:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else ""
+
+
+def _write_effect(call: ast.Call) -> str | None:
+    """Name the write effect ``call`` performs, or None (anything ambiguous is not an effect)."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        if f.id == "open":
+            kw_mode = next((k.value for k in call.keywords if k.arg == "mode"), None)
+            mode = call.args[1] if len(call.args) > 1 else kw_mode
+            return "open(..., write mode)" if _WRITE_MODE_CHARS & set(_str_const(mode)) else None
+        return f"{f.id}()" if _WRITE_CALL_NAME.match(f.id) else None
+    if not isinstance(f, ast.Attribute):
+        return None
+    holder = f.value
+    receiver = holder.id if isinstance(holder, ast.Name) else holder.attr if isinstance(holder, ast.Attribute) else ""
+    if f.attr in ("execute", "executemany"):
+        return f".{f.attr}(write SQL)" if call.args and _WRITE_SQL.match(_str_const(call.args[0])) else None
+    if f.attr == "open":  # Path.open(mode)
+        return ".open(write mode)" if call.args and _WRITE_MODE_CHARS & set(_str_const(call.args[0])) else None
+    if f.attr in _HTTP_VERBS:
+        return f"{receiver}.{f.attr}()" if receiver.lower() in _HTTP_RECEIVERS else None
+    if f.attr in _WRITE_ATTRS or _WRITE_CALL_NAME.match(f.attr):
+        return f".{f.attr}()"
+    return None
+
+
+def _delegated_write(call: ast.Call) -> str | None:
+    """A write-named function handed to another call as a callback (``to_thread(record_slate, ...)``)."""
+    for arg in call.args:
+        ref = arg.id if isinstance(arg, ast.Name) else arg.attr if isinstance(arg, ast.Attribute) else ""
+        if _WRITE_CALL_NAME.match(ref):
+            return f"{ref} passed as callback"
+    return None
+
+
+def _check_query_with_effects(func: ast.FunctionDef | ast.AsyncFunctionDef, ctx: FileContext) -> Diagnostic | None:
+    """Emit ``query-with-effects`` when a query-named function performs a write (first effect cited)."""
+    name = func.name
+    if name.startswith("__") and name.endswith("__"):
+        return None
+    bare = name.lstrip("_")
+    if not _QUERY_NAME.match(bare) or _MEMOIZING_NAME.search(bare):
+        return None
+    for call in _own_calls(func):
+        effect = _write_effect(call) or _delegated_write(call)
+        if effect is not None:
+            return diagnostic_from_spec(
+                SPEC_QUERY_WITH_EFFECTS,
+                file_path=ctx.path.as_posix(),
+                line=func.lineno,
+                message=f"query-named function '{name}' performs a write effect",
+                detail=effect,
+            )
+    return None
+
+
 def _is_elif(outer: ast.If) -> ast.If | None:
     """Return the chained ``elif`` ``If`` node when ``outer``'s ``orelse`` is an ``elif``, else None.
 
@@ -325,7 +423,7 @@ def _check_deep_nesting(func: ast.FunctionDef | ast.AsyncFunctionDef, ctx: FileC
 
 
 def detect(ctx: FileContext) -> list[Diagnostic]:
-    """Run all four complexity rules over one file context."""
+    """Run all complexity rules over one file context."""
     diagnostics: list[Diagnostic] = []
 
     # file-too-large: emit once at line 1 when the physical line count exceeds the cap.
@@ -350,6 +448,7 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
             _check_function_length(node, ctx, codeful_lines),
             _check_too_many_params(node, ctx),
             _check_deep_nesting(node, ctx),
+            None if ctx.is_test_file else _check_query_with_effects(node, ctx),
         ):
             if finding is not None:
                 diagnostics.append(finding)
