@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from deadcode_audit import embed_cache, overlap_embed
+from deadcode_audit.overlap import embed_cache, overlap_embed
 
 DIM = 4
 COMMIT = "a" * 40

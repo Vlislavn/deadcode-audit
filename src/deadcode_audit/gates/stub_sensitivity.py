@@ -22,7 +22,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deadcode_audit import diffscope, mutation
+from deadcode_audit import diffscope
+from deadcode_audit.gates import mutation
 
 _PLUGIN = '''
 """Pytest plugin: record, per test node id, the lines it executed (coverage dynamic contexts)."""

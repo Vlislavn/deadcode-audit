@@ -31,7 +31,7 @@ def mini_repo(tmp_path):
 SETUP = '''
 from pathlib import Path
 import os
-from deadcode_audit.mutation import _configure_mutation_for_paths, _patch_pass_isolation
+from deadcode_audit.gates.mutation import _configure_mutation_for_paths, _patch_pass_isolation
 from mutmut.__main__ import PytestRunner
 _configure_mutation_for_paths([Path("src/example.py")])
 _patch_pass_isolation()

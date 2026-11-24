@@ -277,7 +277,8 @@ def backend_row():
     ],
 )
 def test_invalid_backend_protocol_is_never_clean(tmp_path, monkeypatch, fault):
-    from deadcode_audit import diffscope, javascript
+    from deadcode_audit import diffscope
+    from deadcode_audit.js import javascript
 
     monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
     row = backend_row()
@@ -331,7 +332,8 @@ def test_invalid_backend_protocol_is_never_clean(tmp_path, monkeypatch, fault):
 def test_backend_transport_failures_do_not_return_findings(
     tmp_path, monkeypatch, fault
 ):
-    from deadcode_audit import diffscope, javascript
+    from deadcode_audit import diffscope
+    from deadcode_audit.js import javascript
 
     monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
 
@@ -353,7 +355,7 @@ def test_backend_transport_failures_do_not_return_findings(
 
 
 def test_unsupported_backend_version_is_refused(tmp_path, monkeypatch):
-    from deadcode_audit import javascript
+    from deadcode_audit.js import javascript
 
     monkeypatch.setattr(javascript.shutil, "which", lambda _: "fixture")
     monkeypatch.setattr(
@@ -368,7 +370,8 @@ def test_unsupported_backend_version_is_refused(tmp_path, monkeypatch):
 def test_source_drift_and_failed_later_batch_do_not_publish_a_partial_scan(
     tmp_path, monkeypatch
 ):
-    from deadcode_audit import diffscope, javascript
+    from deadcode_audit import diffscope
+    from deadcode_audit.js import javascript
 
     monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(javascript, "BATCH_FILES", 1)

@@ -16,7 +16,7 @@ def test_repository_import_root_preserves_external_modules(tmp_path):
     result = subprocess.run(
         [sys.executable, "-c", """
 import sys
-from deadcode_audit import mutation
+from deadcode_audit.gates import mutation
 sys.path[:0] = ['lib', '.venv/lib/python/site-packages']
 import project_source, external_source
 mutation._purge_original_source_modules()

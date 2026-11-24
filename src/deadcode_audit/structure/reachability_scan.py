@@ -1,12 +1,12 @@
 """On-demand, advisory WHOLE-TREE dead-symbol reachability scan (beyond the diff-scoped Tier 4 gate).
 
-Where :func:`deadcode_audit.reachability.runtime_consumer_check` checks only the CHANGED public symbols
+Where :func:`deadcode_audit.structure.reachability.runtime_consumer_check` checks only the CHANGED public symbols
 and BLOCKS truly-orphaned ones, this scans EVERY public top-level symbol in ``src/`` and reports the ones
 with no resolved runtime consumer, ranked by deadness confidence. Like the ``overlaps`` subcommand it is
 on-demand and advisory: :func:`run` ALWAYS returns 0. Its actionable classes (orphaned + test-only-reachable)
 also feed the ``scan``/``ci`` pass as the :data:`DEAD_SYMBOL_RULE` diagnostic via :func:`dead_symbol_diagnostics`.
 
-It reuses the Tier 4 resolver and the SHARED :func:`deadcode_audit.reachability.classify_unresolved`
+It reuses the Tier 4 resolver and the SHARED :func:`deadcode_audit.structure.reachability.classify_unresolved`
 classifier, so every symbol lands in the SAME confidence classes the gate uses (plus the undecorated-orphan
 top tier). The occurrence floor is computed DIFFERENTLY from the gate on purpose: the gate's ``git grep``
 floor sees only TRACKED files and counts non-``.py`` doc hits — fine commit-time/diff-scoped, but wrong for a
@@ -25,9 +25,15 @@ from collections import defaultdict
 from pathlib import Path
 
 from deadcode_audit import diffscope
-from deadcode_audit.diagnostic import ENGINE_REACHABILITY, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
+from deadcode_audit.diagnostic import (
+    ENGINE_REACHABILITY,
+    Diagnostic,
+    RuleSpec,
+    Severity,
+    diagnostic_from_spec,
+)
 from deadcode_audit.framework import safe_parse
-from deadcode_audit.reachability import (
+from deadcode_audit.structure.reachability import (
     ADVISORY_LABEL,
     ADVISORY_RANK,
     ADVISORY_TEST_ONLY,
@@ -42,7 +48,6 @@ from deadcode_audit.reachability import (
     runtime_corpus_files,
     vulture_whitelist_names,
 )
-
 
 # Whole-word identifier tokenizer == ``git grep -w`` semantics: a name "occurs" only as a complete
 # token (so ``reset_for_tests`` does NOT match inside ``_reset_for_tests``). Run over RAW lines, it also

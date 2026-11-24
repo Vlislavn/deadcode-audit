@@ -10,9 +10,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from deadcode_audit import clones, diffscope, overlap_embed, overlaps
+from deadcode_audit import diffscope
+from deadcode_audit.overlap import clones, overlap_embed, overlaps
 from deadcode_audit.cli import main
-from deadcode_audit.javascript_functions import collect_functions_with_blind
+from deadcode_audit.js.collect import collect_functions_with_blind
 
 
 def sources(tmp_path, monkeypatch):

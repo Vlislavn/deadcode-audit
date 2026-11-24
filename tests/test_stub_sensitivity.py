@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-from deadcode_audit.stub_sensitivity import _chunks, find_functions, stub_source
+from deadcode_audit.gates.stub_sensitivity import _chunks, find_functions, stub_source
 
 MODULE = '''\
 def asserted():

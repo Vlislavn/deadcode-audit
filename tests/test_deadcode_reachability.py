@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit.reachability import (
+from deadcode_audit.structure.reachability import (
     build_reexport_map,
     collect_module_facts,
     module_dotted_name,
@@ -181,7 +181,7 @@ def test_no_reference_anywhere_does_not_resolve() -> None:
 
 def test_classify_unresolved_orphaned_policy_and_decorated_precedence() -> None:
     """The fork that distinguishes the blocking gate (orphaned->block) from the scan (orphaned->advisory)."""
-    from deadcode_audit import reachability as r
+    from deadcode_audit.structure import reachability as r
 
     plain = r.PublicSymbolDefinition(Path("src/x.py"), "lonely", 1, decorated=False)
     decorated = r.PublicSymbolDefinition(Path("src/x.py"), "handler", 1, decorated=True)
@@ -219,7 +219,7 @@ def test_classify_unresolved_orphaned_policy_and_decorated_precedence() -> None:
 
 def _drive_consumer_check(monkeypatch: pytest.MonkeyPatch, *, has_test_ref: bool) -> tuple[int, str]:
     """Drive runtime_consumer_check with a single unresolved, no-runtime-consumer public symbol."""
-    from deadcode_audit import reachability as r
+    from deadcode_audit.structure import reachability as r
 
     monkeypatch.setattr(
         r,
@@ -261,7 +261,7 @@ def test_consumer_check_ranks_advisories_by_deadness_confidence(
     unrelated to any real trace — the ranking keys off the advisory CLASS, not any value, so the
     order must hold for any mix of the three classes.
     """
-    from deadcode_audit import reachability as r
+    from deadcode_audit.structure import reachability as r
 
     defs = {
         Path("src/route.py"): r.PublicSymbolDefinition(Path("src/route.py"), "mounted_route", 5, decorated=True),
@@ -300,7 +300,7 @@ def test_consumer_check_demotes_test_support_named_symbols(
     classification keys off the convention SUFFIX, not a specific symbol. It must land in the
     test-support class (expected), never in the product-dead "remove or wire" group.
     """
-    from deadcode_audit import reachability as r
+    from deadcode_audit.structure import reachability as r
 
     monkeypatch.setattr(
         r,

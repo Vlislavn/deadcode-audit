@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import _mask, config, framework, history, output
+from deadcode_audit import _mask, config, framework, output
+from deadcode_audit.gates import history
 from fixtures.deadcode_cli import run_deadcode_cli
 from deadcode_audit.diagnostic import ENGINE_AI_SLOP, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
 from deadcode_audit.scoring import calculate_score

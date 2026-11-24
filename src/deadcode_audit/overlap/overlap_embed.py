@@ -30,7 +30,7 @@ def get_embedder(model_id: str) -> Callable[[list[str]], np.ndarray]:
     import torch
     from transformers import AutoModel, AutoTokenizer
 
-    from deadcode_audit import embed_cache
+    from deadcode_audit.overlap import embed_cache
 
     torch.set_num_threads(2)
     revision = _PINNED_REMOTE.get(model_id)

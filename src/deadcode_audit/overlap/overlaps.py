@@ -13,7 +13,7 @@ The embedder is dependency-INJECTED (``overlap_embed.get_embedder``), so this mo
 torch/numpy and tests pass a fake embedder. If the model or its extras are missing, or loading/running it fails for any reason, ``run`` warns once
 and returns pass 1 only. On-demand only — never a gate, ``run`` always returns 0.
 
-Reuses the Tier 6 primitives in :mod:`deadcode_audit.clones` (tokens, structural similarity, the
+Reuses the Tier 6 primitives in :mod:`deadcode_audit.overlap.clones` (tokens, structural similarity, the
 API-surface Jaccard) and :mod:`deadcode_audit.diffscope` (the ``src`` corpus). The sound length
 pre-filter is inlined so a passing pair is never dropped.
 """
@@ -32,8 +32,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import blind, clones, config, diffscope, javascript, scan
+from deadcode_audit import config, diffscope, scan
 from deadcode_audit.framework import safe_parse
+from deadcode_audit.js import javascript
+from deadcode_audit.overlap import blind, clones
 
 if TYPE_CHECKING:
     import numpy as np
@@ -93,7 +95,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     selected = [path for path in selected if not (diffscope.is_test_path(path) or javascript.is_js_test_file(path))]
     for path in selected:
         if path.suffix in javascript.SUFFIXES:
-            from deadcode_audit.javascript_functions import collect_functions_with_blind
+            from deadcode_audit.js.collect import collect_functions_with_blind
             source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
             try:
                 funcs.extend(_SourcedFunc(record, text, blind_text)
@@ -343,7 +345,7 @@ def _pair_json(p: OverlapPair) -> dict[str, object]:
 
 def _load_embedder(model: str) -> EmbedFn | None:
     """Pass-2 embedder, or None (with ONE warning line) when the model or its extras are unavailable."""
-    from deadcode_audit import overlap_embed
+    from deadcode_audit.overlap import overlap_embed
 
     try:
         return overlap_embed.get_embedder(model)
@@ -400,7 +402,7 @@ def run(*, threshold: float, top: int, min_tokens: int, no_embed: bool, model: s
     pairs, embed_pairs = (all_pairs[:top], all_embed[:top]) if top > 0 else (all_pairs, all_embed)
     embed_active = embed_fn is not None
     if as_json:
-        from deadcode_audit import overlap_embed
+        from deadcode_audit.overlap import overlap_embed
 
         payload: dict[str, object] = {
             "threshold": threshold,

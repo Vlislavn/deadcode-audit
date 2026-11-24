@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import diffscope, javascript
+from deadcode_audit import diffscope
+from deadcode_audit.js import javascript
 
 CANNED = Path(__file__).parent / "fixtures" / "jscpd_report.json"
 FAKE_JSCPD = """#!{python}

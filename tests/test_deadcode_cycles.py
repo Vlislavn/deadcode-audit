@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import config, cycles
+from deadcode_audit import config
+from deadcode_audit.structure import cycles
 from fixtures.deadcode_cli import run_deadcode_cli
 
 # --- Tarjan SCC / find_cycles ---

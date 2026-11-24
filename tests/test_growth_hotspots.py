@@ -5,7 +5,8 @@ import subprocess
 
 import pytest
 
-from deadcode_audit import cli, diffscope, growth
+from deadcode_audit import cli, diffscope
+from deadcode_audit.gates import growth
 
 BRANCHY = (
     "def f(x):\n    if x == 1:\n        return 1\n    elif x == 2:\n        return 2\n"

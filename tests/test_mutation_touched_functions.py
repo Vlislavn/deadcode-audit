@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 from mutmut.mutation.file_mutation import mutate_file_contents
 
-from deadcode_audit import cli, diffscope, mutation
+from deadcode_audit import cli, diffscope
+from deadcode_audit.gates import mutation
 
 THREE = (
     "def a(x):\n    return x + 1\n\n\n"

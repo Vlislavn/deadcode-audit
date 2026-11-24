@@ -11,18 +11,11 @@ import argparse
 import sys
 from typing import TYPE_CHECKING, Any
 
-from deadcode_audit import (
-    config,
-    diffscope,
-    history,
-    mutation,
-    output,
-    reachability,
-    redundancy,
-    vulture_gate,
-)
+from deadcode_audit import config, diffscope, output
 from deadcode_audit import scan as scan_mod
 from deadcode_audit.diagnostic import Severity
+from deadcode_audit.gates import history, mutation
+from deadcode_audit.structure import reachability, redundancy, vulture_gate
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -160,11 +153,14 @@ def _cmd_ci(args: argparse.Namespace) -> int:
 
 
 def _cmd_rules(_args: argparse.Namespace) -> int:
-    from deadcode_audit.architecture import RULES as ARCHITECTURE_RULES
     from deadcode_audit.detectors import ALL_DETECTORS
     from deadcode_audit.framework import all_rule_specs
-    from deadcode_audit.javascript import RULE_SPECS
-    from deadcode_audit.reachability_scan import DEAD_SYMBOL_RULE, DUPLICATE_CONSTANT_RULE
+    from deadcode_audit.js.javascript import RULE_SPECS
+    from deadcode_audit.structure.architecture import RULES as ARCHITECTURE_RULES
+    from deadcode_audit.structure.reachability_scan import (
+        DEAD_SYMBOL_RULE,
+        DUPLICATE_CONSTANT_RULE,
+    )
 
     for spec in sorted([*all_rule_specs(ALL_DETECTORS), DEAD_SYMBOL_RULE, DUPLICATE_CONSTANT_RULE, *ARCHITECTURE_RULES, *RULE_SPECS], key=lambda s: s.rule):
         style = " [style]" if spec.style else ""
@@ -196,7 +192,7 @@ def _cmd_trend(args: argparse.Namespace) -> int:
 
 
 def _cmd_overlaps(args: argparse.Namespace) -> int:
-    from deadcode_audit import overlaps  # lazy: keeps cli import torch-free
+    from deadcode_audit.overlap import overlaps  # lazy: keeps cli import torch-free
 
     return overlaps.run(
         threshold=args.threshold,
@@ -210,16 +206,17 @@ def _cmd_overlaps(args: argparse.Namespace) -> int:
 
 
 def _cmd_reachability_scan(args: argparse.Namespace) -> int:
-    from deadcode_audit import (
-        reachability_scan,
-    )  # lazy: parallels the other on-demand subcommands
+    from deadcode_audit.structure import (
+        reachability_scan,  # lazy: parallels the other on-demand subcommands
+    )
 
     return reachability_scan.run(top=args.top, as_json=args.json)
 
 
 def _cmd_growth(args: argparse.Namespace) -> int:
     import json
-    from deadcode_audit import growth
+
+    from deadcode_audit.gates import growth
 
     if args.hotspots:
         report = growth.hotspots(args.base, args.head, args.paths or None, args.top)
@@ -233,13 +230,13 @@ def _cmd_growth(args: argparse.Namespace) -> int:
 
 
 def _cmd_stub_sensitivity(args: argparse.Namespace) -> int:
-    from deadcode_audit import stub_sensitivity
+    from deadcode_audit.gates import stub_sensitivity
 
     return stub_sensitivity.run(args.paths, args.compare_branch, as_json=args.json)
 
 
 def _cmd_cycles(args: argparse.Namespace) -> int:
-    from deadcode_audit import cycles
+    from deadcode_audit.structure import cycles
 
     return cycles.run(as_json=args.json, advisory=args.advisory, strict_lazy=args.strict_lazy)
 

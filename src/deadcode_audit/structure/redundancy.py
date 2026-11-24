@@ -19,8 +19,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import clones, diffscope
+from deadcode_audit import diffscope
 from deadcode_audit.framework import safe_parse
+from deadcode_audit.overlap import clones
 
 # --- Redundant transform tables (semantic-principle driven, conservative) ---
 

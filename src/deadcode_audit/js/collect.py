@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
 
-from deadcode_audit.blind import rename
-from deadcode_audit.clones import FuncRecord, semantic_signature
+from deadcode_audit.overlap.blind import rename
+from deadcode_audit.overlap.clones import FuncRecord, semantic_signature
 
 PARSER_VERSION = "0.25.2"
 

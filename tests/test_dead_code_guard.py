@@ -12,9 +12,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from deadcode_audit import cli, diffscope, mutation, reachability, vulture_gate
-from deadcode_audit.clones import CloneFinding  # noqa: F401  (kept importable for downstream tests)
-from deadcode_audit.mutation import (
+from deadcode_audit import cli, diffscope
+from deadcode_audit.gates import mutation
+from deadcode_audit.structure import reachability, vulture_gate
+from deadcode_audit.overlap.clones import CloneFinding  # noqa: F401  (kept importable for downstream tests)
+from deadcode_audit.gates.mutation import (
     MutationGateStat,
     _configure_mutation_for_paths,
     build_also_copy,
@@ -27,11 +29,11 @@ from deadcode_audit.mutation import (
     purge_cached_test_modules,
     reap_next_mutant_child,
 )
-from deadcode_audit.reachability import (
+from deadcode_audit.structure.reachability import (
     PublicSymbolDefinition,
     symbols_without_runtime_consumers,
 )
-from deadcode_audit.vulture_gate import (
+from deadcode_audit.structure.vulture_gate import (
     VultureFinding,
     filter_findings_to_changed_lines,
     parse_vulture_findings,

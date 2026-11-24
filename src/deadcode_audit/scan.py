@@ -3,8 +3,8 @@
 This is the unified surface aislop calls ``scan`` — one pass over a set of files producing a
 ``Diagnostic[]`` + a 0–100 score, rendered as terminal / JSON / SARIF / agent-prompt. Detectors
 come from :mod:`deadcode_audit.detectors`, plus the whole-tree ``reachability/dead-symbol`` rule
-(:func:`deadcode_audit.reachability_scan.dead_symbol_diagnostics`) so ``ci`` gates on unreferenced symbols,
-and the ``reachability/duplicate-constant`` warning (:func:`~deadcode_audit.reachability_scan.duplicate_constant_diagnostics`).
+(:func:`deadcode_audit.structure.reachability_scan.dead_symbol_diagnostics`) so ``ci`` gates on unreferenced symbols,
+and the ``reachability/duplicate-constant`` warning (:func:`~deadcode_audit.structure.reachability_scan.duplicate_constant_diagnostics`).
 """
 
 from __future__ import annotations
@@ -14,14 +14,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import architecture, config, diffscope, javascript, reachability_scan
+from deadcode_audit import config, diffscope
 from deadcode_audit.framework import Detector, run_detectors
+from deadcode_audit.js import javascript
 from deadcode_audit.scoring import (
     DEFAULT_SMOOTHING,
     GOOD_THRESHOLD,
     OK_THRESHOLD,
     calculate_score,
 )
+from deadcode_audit.structure import architecture, reachability_scan
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

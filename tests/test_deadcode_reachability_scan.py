@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import reachability_scan
+from deadcode_audit.structure import reachability_scan
 from fixtures.deadcode_cli import run_deadcode_cli
-from deadcode_audit.reachability import (
+from deadcode_audit.structure.reachability import (
     _ADVISORY_DECORATED,
     _ADVISORY_ORPHANED,
     ADVISORY_TEST_ONLY,
@@ -191,7 +191,8 @@ def test_scan_honors_configured_whitelist_but_still_reports_similar_dead_name(tm
 def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_broken(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deadcode_audit import diffscope, reachability
+    from deadcode_audit import diffscope
+    from deadcode_audit.structure import reachability
 
     (tmp_path / "ok.py").write_text("alpha\n_.beta\n# gamma\n", encoding="utf-8")
     (tmp_path / "broken.py").write_text("def (:\n", encoding="utf-8")

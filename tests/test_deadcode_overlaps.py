@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from deadcode_audit import blind, clones, overlap_embed, overlaps
+from deadcode_audit.overlap import blind, clones, overlap_embed, overlaps
 from deadcode_audit.cli import main
 from fixtures.deadcode_cli import run_deadcode_cli
 

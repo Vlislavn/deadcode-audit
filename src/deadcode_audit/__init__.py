@@ -18,20 +18,13 @@ should target the submodule where it is *used* (e.g. ``diffscope.added_lines_by_
 from __future__ import annotations
 
 from deadcode_audit.cli import main
-from deadcode_audit.clones import (
-    CloneFinding,
-    clone_similarity,
-    collect_functions,
-    find_near_duplicate_functions,
-    normalize_function,
-)
 from deadcode_audit.diffscope import (
     added_lines_by_file,
     changed_python_files,
     changed_src_python_files,
     parse_added_lines,
 )
-from deadcode_audit.mutation import (
+from deadcode_audit.gates.mutation import (
     MutationGateStat,
     build_mutation_copy_roots,
     build_mutation_targets,
@@ -40,18 +33,25 @@ from deadcode_audit.mutation import (
     mutation_gate_exit_code,
     mutation_gate_failures,
 )
-from deadcode_audit.reachability import (
+from deadcode_audit.overlap.clones import (
+    CloneFinding,
+    clone_similarity,
+    collect_functions,
+    find_near_duplicate_functions,
+    normalize_function,
+)
+from deadcode_audit.structure.reachability import (
     PublicSymbolDefinition,
     runtime_consumer_check,
     symbols_without_runtime_consumers,
 )
-from deadcode_audit.redundancy import (
+from deadcode_audit.structure.redundancy import (
     RedundancyFinding,
     find_redundant_transforms,
     run_check,
     run_files,
 )
-from deadcode_audit.vulture_gate import (
+from deadcode_audit.structure.vulture_gate import (
     VultureFinding,
     filter_findings_to_changed_lines,
     parse_vulture_findings,

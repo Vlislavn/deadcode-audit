@@ -2,7 +2,7 @@
 
 import pytest
 
-from deadcode_audit.javascript_functions import collect_functions
+from deadcode_audit.js.collect import collect_functions
 
 
 def test_function_record_preserves_exact_utf8_source_and_declaration_symbol(tmp_path):

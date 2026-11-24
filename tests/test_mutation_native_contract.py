@@ -27,7 +27,7 @@ def test_native_config_selects_exact_files_and_broad_copy_roots(tmp_path):
     )
     result = run_contract(tmp_path, '''
 from pathlib import Path
-from deadcode_audit.mutation import _configure_mutation_for_paths
+from deadcode_audit.gates.mutation import _configure_mutation_for_paths
 from mutmut.configuration import Config
 c = _configure_mutation_for_paths([Path("src/example.py")])
 assert c is Config.get()
@@ -53,14 +53,14 @@ def test_source_purge_preserves_native_entry_aliases(tmp_path):
     result = run_contract(tmp_path, '''
 import sys
 import __main__
-from deadcode_audit import mutation
+from deadcode_audit.gates import mutation
 sys.path.insert(0, "lib")
 import fixture_source
 sys.modules["__mp_main__"] = __main__
 main = sys.modules["__main__"]
 mutation._purge_original_source_modules()
 assert "fixture_source" not in sys.modules
-assert "deadcode_audit.mutation" not in sys.modules
+assert "deadcode_audit.gates.mutation" not in sys.modules
 assert sys.modules["__main__"] is main
 assert sys.modules["__mp_main__"] is main
 ''')

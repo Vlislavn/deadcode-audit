@@ -2,7 +2,7 @@
 
 import ast
 
-from deadcode_audit.clones import clone_similarity, normalize_function
+from deadcode_audit.overlap.clones import clone_similarity, normalize_function
 
 
 def _tokens(src: str) -> list[str]:
