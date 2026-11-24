@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 _CHUNK = 500  # stay below SQLite's bound-variable limit
 _warned = False
@@ -52,20 +52,24 @@ def _valid(rows: np.ndarray) -> bool:
     return bool(np.isfinite(rows).all() and np.allclose(np.linalg.norm(rows, axis=1), 1.0, atol=1e-3))
 
 
+def _valid_vectors(conn: sqlite3.Connection, identity: str, part: list[str], dim: int) -> Iterator[tuple[str, np.ndarray]]:
+    """Yield ``(source hash, vector)`` for the well-formed cached rows among ``part``."""
+    marks = ",".join("?" * len(part))
+    query = f"SELECT source, vec FROM vectors WHERE identity = ? AND source IN ({marks})"
+    for source, blob in conn.execute(query, [identity, *part]):
+        if isinstance(blob, bytes) and len(blob) == dim * 4:
+            vec = np.frombuffer(blob, dtype=np.float32).copy()
+            if _valid(vec[None, :]):
+                yield source, vec
+
+
 def _lookup(identity: str, hashes: Sequence[str], dim: int) -> dict[str, np.ndarray] | None:
     """Valid cached vectors by source hash; ``None`` when the cache itself is unusable."""
     found: dict[str, np.ndarray] = {}
     try:
         with closing(_connect()) as conn:
             for start in range(0, len(hashes), _CHUNK):
-                part = list(hashes[start : start + _CHUNK])
-                marks = ",".join("?" * len(part))
-                query = f"SELECT source, vec FROM vectors WHERE identity = ? AND source IN ({marks})"
-                for source, blob in conn.execute(query, [identity, *part]):
-                    if isinstance(blob, bytes) and len(blob) == dim * 4:
-                        vec = np.frombuffer(blob, dtype=np.float32).copy()
-                        if _valid(vec[None, :]):
-                            found[source] = vec
+                found.update(_valid_vectors(conn, identity, list(hashes[start : start + _CHUNK]), dim))
     except (sqlite3.Error, OSError) as exc:
         _warn(exc)
         return None

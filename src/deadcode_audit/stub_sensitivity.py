@@ -87,6 +87,17 @@ class Report:
     skipped: list[dict[str, str]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _Sandbox:
+    """Run-wide settings for executing covering tests against the scratch tree."""
+
+    plain: list[str]
+    env: dict[str, str]
+    scratch: Path
+    timeout: float
+    mem_cap: int
+
+
 def _own_nodes(body: list[ast.stmt]):
     """Yield nodes of a function body without descending into nested scopes."""
     stack: list[ast.AST] = list(body)
@@ -316,6 +327,7 @@ def run_audit(paths: list[Path]) -> Report:
         empty_files: list[str] = []
         run_env = {k: v for k, v in env.items() if k != "STUB_COV_DATA"}
         plain = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x"]
+        sandbox = _Sandbox(plain, run_env, scratch, timeout, mem_cap)
         for path in paths:
             spans, skipped = find_functions(sources[path])
             report.skipped.extend({"file": path.as_posix(), **s} for s in skipped)
@@ -325,7 +337,7 @@ def run_audit(paths: list[Path]) -> Report:
                 continue
             target = scratch / path
             for span in spans:
-                stubbed = _stub_one(plain, run_env, scratch, target, raw[path], path, span, covering[span.locator], timeout, mem_cap)
+                stubbed = _stub_one(sandbox, target, raw[path], path, span, covering[span.locator])
                 if stubbed is None:
                     report.skipped.append({"file": path.as_posix(), "function": span.locator, "reason": "stub does not parse"})
                 else:
@@ -338,8 +350,7 @@ def run_audit(paths: list[Path]) -> Report:
 
 
 def _stub_one(
-    plain: list[str], env: dict[str, str], scratch: Path, target: Path, raw: bytes, path: Path,
-    span: FunctionSpan, tests: list[str], timeout: float, mem_cap: int,
+    box: _Sandbox, target: Path, raw: bytes, path: Path, span: FunctionSpan, tests: list[str]
 ) -> StubResult | None:
     """Stub one function and run its covering tests; ``None`` when the stubbed source does not parse."""
     def result(detected: bool, by: str | None, reason: str | None = None, seconds: float = 0.0) -> StubResult:
@@ -355,7 +366,7 @@ def _stub_one(
     target.write_bytes(bom + stubbed.encode("utf-8"))
     started = time.monotonic()
     try:
-        code, out = _run_chunks(plain, tests, scratch, env, timeout, mem_cap)
+        code, out = _run_chunks(box.plain, tests, box.scratch, box.env, box.timeout, box.mem_cap)
     finally:
         target.write_bytes(raw)
     seconds = round(time.monotonic() - started, 3)
