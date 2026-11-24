@@ -14,7 +14,7 @@ and plain file modules (reported at the file). Within a unit:
   resolves, through re-exports, to this very definition (an unused import, an ``__all__`` entry, a same-named
   function elsewhere, or tests never count; a package ``__init__`` counts only when it uses the name). v1: methods count toward the total only, so the rule
   is false-negative-biased.
-* **lists** — shown functions grouped by the in-unit class they mention; a function mentioning none forms a list of its own. A package whose items equal those of one
+* **lists** — shown functions grouped by the in-unit class (defining module + name, own or from-imported) they mention: a function is on the list of EVERY such class (and counts once in ``shown``); one mentioning none forms a list of its own. A package whose items equal those of one
   of its file modules (facade + sole module) is skipped: the module is reported instead.
 
 The rule fires when the interface is big (``shown`` over :data:`SHOWN_LIMIT`), it does not collapse into
@@ -36,6 +36,7 @@ from deadcode_audit.reachability import (
     ModuleFacts,
     build_reference_index,
     collect_module_facts,
+    resolve_identity,
     runtime_corpus_files,
 )
 
@@ -175,13 +176,26 @@ def _cap(names: list[str]) -> str:
     return ", ".join(names[:NOTES_LIMIT]) + (f", +{more} more" if more > 0 else "")
 
 
-def _lists(shown: list[tuple[_Module, _Item]], classes: set[str]) -> dict[tuple[str, str], list[str]]:
-    """Group shown functions: each joins the in-unit class it mentions, else stands alone."""
+def _lists(
+    shown: list[tuple[_Module, _Item]], members: list[_Module], by_dotted: dict[str, ModuleFacts]
+) -> dict[tuple[str, str], list[str]]:
+    """Group shown functions: each joins the list of EVERY in-unit class it mentions, else stands alone.
+
+    A class is its defining ``(module, name)``: a name is the module's own class or a from-import that resolves to
+    another in-unit module's class, so same-named classes in different files stay apart.
+    """
+    unit_classes = {(m.dotted, name) for m in members for name in m.classes}
     groups: dict[tuple[str, str], list[str]] = {}
     for module, item in shown:
-        mentioned = item.names & classes
-        key = ("class", min(mentioned)) if mentioned else ("function", f"{module.dotted}.{item.name}")
-        groups.setdefault(key, []).append(item.name)
+        mentioned = {
+            ident
+            for name in item.names
+            if (ident := (module.dotted, name) if name in module.classes else resolve_identity(module.dotted, name, by_dotted))
+            in unit_classes
+        }
+        keys = [("class", ".".join(ident)) for ident in sorted(mentioned)] or [("function", f"{module.dotted}.{item.name}")]
+        for key in keys:
+            groups.setdefault(key, []).append(item.name)
     return groups
 
 
@@ -212,7 +226,7 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
         hidden = total - len(shown)
         if len(shown) <= SHOWN_LIMIT or hidden > len(shown) * BREAK_EVEN:
             continue
-        groups = _lists(shown, set().union(*(m.classes for m in members)))
+        groups = _lists(shown, members, {f.dotted: f for f in facts})
         longest = max(groups.values(), key=len)
         if len(groups) <= LISTS_LIMIT and len(longest) <= LIST_LENGTH_LIMIT:
             continue

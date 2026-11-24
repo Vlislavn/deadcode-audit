@@ -46,8 +46,9 @@ Total expected after the work lands: 7 file cycles listed in the table (a, b-cov
 
 Semantics (updated): only FUNCTIONS are working items. Classes are not counted (neither in `shown` nor in
 `total`); methods of top-level classes count toward `total` only (dunders, property/setters, thin wrappers and
-methods of classes with an external base excluded). A class only matters as the head of a list: shown free
-functions that reference an in-unit class are grouped under it. `shown` = free functions USED by runtime
+methods of classes with an external base excluded). A class only matters as the head of a list: a shown free
+function is on the list of EVERY in-unit class it references (counted once in `shown`), a class being its defining
+(module, name) — own class or a from-import of one — so same-named classes in different files stay apart. `shown` = free functions USED by runtime
 code outside the unit (the consumer must load a name that resolves, through re-exports, to that very definition: an unused import, an `__all__` entry, a homonym elsewhere or a test never counts; a package `__init__` counts only if it uses the name); `hidden = total - shown`. FIRE iff `shown > 7` AND (`lists > 7` OR some list `> 7`) AND
 `hidden <= shown`. Tests never count.
 
@@ -79,6 +80,9 @@ at either path. Consumers are `app/use_<case>.py` (case t: `tests/test_shaltest.
 | (x3) real calls from another package's `__init__` | shallow-module | `shalid/rin.py:1` | FIRE | `rpk/__init__.py` imports `s1..s8` and calls all of them (it has its own function, so it is no facade). 8 / 8 / 0. A package `__init__` is a consumer iff it uses the name. |
 | (x4) module alias | shallow-module | `shalid/ali.py:1` | FIRE | `use_ali.py` does `import ali as x` and calls `x.a1()..x.a8()`. 8 / 8 / 0. |
 | (x5) test-only consumer | shallow-module | `shalid/tonly.py:1` | NO-FIRE | `e1..e8` are used only by `tests/test_ident.py`; tests never count. |
+| (y1) function on every class list | shallow-module | `shalcls/zcls.py:1` | FIRE | 8 / 2 / 0. `g1..g7` use `Z`, `g8` uses `A` and `Z`: `Z`'s list has 8 (> 7), `A`'s list has 1. A function joining only one list (the smallest class name) would give lists 7 + 1 = silent. |
+| (y2) homonym classes | shallow-module | `shalcls/kpk/__init__.py:1` | NO-FIRE | Package 10 / 2 / 0: `kpk.m1` and `kpk.m2` each define their own `K` and 5 functions using it: two lists of 5, not one list of 10 under the spelling `K`. Each module alone is 5 shown. |
+| (y3) class imported from another module of the unit | shallow-module | `shalcls/kpi/__init__.py:1` | FIRE (package) | Package 10 / 1 / 0: `kpi.m2` does `from kpi.m1 import K`, so its 5 functions and `m1`'s 5 share `K`'s list of 10. |
 
 ## 3. architecture/wide-directory (`deadcode scan`, warning)
 
