@@ -12,10 +12,10 @@ DEADCODE_REPO_ROOT=examples/architecture-fixture uv run --no-sync deadcode scan 
 uv run --no-sync deadcode scan examples/architecture-fixture --json     # same files, root config absent
 ```
 
-Layout (`.deadcode.yml`: `source_roots`/`import_roots` = `cyc shal app widedirs`, `test_roots` = `tests`).
+Layout (`.deadcode.yml`: `source_roots`/`import_roots` = `cyc shal shalmod app widedirs`, `test_roots` = `tests`).
 Dotted module names are relative to those roots (`cyc/cheap/m_a.py` is `cheap.m_a`). Paths below are
-relative to the fixture root. Group dirs `cyc/ shal/ app/ widedirs/` are not packages (no `__init__.py`); each
-has fewer than 15 members (cyc 9, shal 13, app 12, widedirs 4), so none of them may be reported as wide.
+relative to the fixture root. Group dirs `cyc/ shal/ shalmod/ app/ widedirs/` are not packages (no `__init__.py`); each
+has fewer than 15 members (cyc 9, shal 13, shalmod 2, app 14, widedirs 4), so none of them may be reported as wide.
 
 `.deadcode.yml` `allowed_cycles`: `shrink.a <-> shrink.b <-> shrink.c`, `grow.a <-> grow.b`.
 
@@ -44,25 +44,36 @@ Total expected after the work lands: 7 file cycles listed in the table (a, b-cov
 
 ## 2. architecture/shallow-module (`deadcode scan`, warning)
 
-`shown` = free functions / public classes referenced by runtime code outside the unit. `hidden = total - shown`
-(total = working items). FIRE iff `shown > 7` AND (`lists > 7` OR some list `> 7`) AND `hidden <= shown`.
-The consumer of each case is `app/use_<case>.py` (cases t: `tests/test_shaltest.py`).
+Semantics (updated): only FUNCTIONS are working items. Classes are not counted (neither in `shown` nor in
+`total`); methods of top-level classes count toward `total` only (dunders, property/setters, thin wrappers and
+methods of classes with an external base excluded). A class only matters as the head of a list: shown free
+functions that reference an in-unit class are grouped under it. `shown` = free functions referenced by runtime
+code outside the unit; `hidden = total - shown`. FIRE iff `shown > 7` AND (`lists > 7` OR some list `> 7`) AND
+`hidden <= shown`. Tests never count.
+
+Units: a package dir (reported at `__init__.py:1`) or a file module (`file:1`). **A package unit is skipped when
+its working-item set equals one of its modules' (facade package + sole module); then only the module is
+reported.** Every package below except (h2) is such a facade (`__init__.py` re-exports from a single
+module, `core.py` (`engine.py` in (n))), so its finding, if any, is at that module's `:1`, **never** at `__init__.py:1`. "NO-FIRE" means no finding
+at either path. Consumers are `app/use_<case>.py` (case t: `tests/test_shaltest.py`).
 
 | Case | Rule | Path (report location) | Result | shown / lists / hidden and reason |
 |---|---|---|---|---|
-| (h) shallow | shallow-module | `shal/shallow/__init__.py:1` | FIRE | 9 / 9 / 6. 15 free functions (9 public shown, 3 private + 3 public unused outside); no in-unit class, so each shown function is its own list. |
-| (i) deep | shallow-module | `shal/deep/__init__.py:1` | NO-FIRE | 3 / 3 / 17. shown not > 7. |
-| (j) padded | shallow-module | `shal/padded/__init__.py:1` | NO-FIRE | 1 / 1 / 8. 9 functions are imported from outside but 8 are thin wrappers (`return _implN(a, b)`), which are excluded from working items. Counted naively it would be 9 / 9 / 8 = FIRE. |
-| (k) private | shallow-module | `shal/private/__init__.py:1` | NO-FIRE | 8 / 8 / 9. 9 underscore helpers (used only inside) are working items, so hidden 9 > shown 8. If private helpers were ignored it would be 8 / 8 / 0 = FIRE. |
-| (l) grouped | shallow-module | `shal/grouped/__init__.py:1` | NO-FIRE | 9 / 4 / 8. Lists: 4 functions return in-unit `Ledger` (1 list of 4), 3 build in-unit `Journal` in the body (1 list of 3), 2 plain functions (2 lists) = 4 lists, largest 4. See OPEN QUESTION 1. Hidden: 2 private + 2 classes + 4 methods = 8 <= 9, so only the lists condition blocks it. |
-| (l2) grouped_big (extra) | shallow-module | `shal/grouped_big/__init__.py:1` | FIRE | 9 / 1 / 5. All 9 shown functions return in-unit `Account` -> one list of 9 > 7 ("some list > 7"). Hidden: `Account` + `deposit` + 3 private = 5 <= 9. See OPEN QUESTION 1. |
-| (m1) boundary 8/8 | shallow-module | `shal/bound_fire/__init__.py:1` | FIRE | 8 / 8 / 8. shown 8 > 7, lists 8 > 7, hidden 8 <= shown 8. |
-| (m2) boundary 8/9 | shallow-module | `shal/bound_hidden/__init__.py:1` | NO-FIRE | 8 / 8 / 9. hidden 9 > shown 8. |
-| (m3) boundary 7/0 | shallow-module | `shal/bound_seven/__init__.py:1` | NO-FIRE | 7 / 7 / 0. shown 7 is not > 7. |
-| (n) methods | shallow-module | `shal/methods/__init__.py:1` | NO-FIRE | 2 / 2 / 21. `Engine` has 20 methods and `app/use_methods.py` calls every one, but methods never count as shown; only `make_engine` and `describe` are imported (the class is not). |
-| (s) file module (extra) | shallow-module | `shal/flat.py:1` | FIRE | 9 / 9 / 6. Unit = file module, reported at `file:1`. Same shape as (h). |
-| (t) tests only (extra) | shallow-module | `shal/shaltest/__init__.py:1` | NO-FIRE | 0 / 0 / 15. Same shape as (h) but the only importer is `tests/test_shaltest.py`; tests never count. |
-| (u) excluded kinds (extra) | shallow-module | `shal/excluded/__init__.py:1` | FIRE | 8 / 8 / 6. Hidden = 2 private functions + `Plain` + `Worker` + `Plain.bump`/`drop`. Excluded (not counted): 4 dunders + 4 property/setter defs in `Plain` and the 8 methods of `Worker(threading.Thread)` (external base). If they were counted, hidden would be 22 > 8 and it would not fire. |
+| (h) shallow | shallow-module | `shal/shallow/core.py:1` (package `shal/shallow/` has a real `__init__.py` re-exporting from `core.py`; NO finding at `shal/shallow/__init__.py`) | FIRE | 9 / 9 / 6. 15 functions (9 public shown, 3 private + 3 public unused outside); no class, so each shown function is its own list. Package set == module set, so only the module is reported. |
+| (h2) multi-module package (extra) | shallow-module | `shal/multi/__init__.py:1` | FIRE (package); NO finding at `shal/multi/a.py` / `b.py` | Package 10 / 10 / 4 (modules `a`, `b` each 5 shown + 2 private functions). Package set differs from either module's set, so the package is not skipped. Each module alone is 5 / 5 / 2: shown not > 7. |
+| (i) deep | shallow-module | `shal/deep/core.py:1` | NO-FIRE | 3 / 3 / 17. shown not > 7. |
+| (j) padded | shallow-module | `shal/padded/core.py:1` | NO-FIRE | 1 / 1 / 8. 9 functions are imported from outside but 8 are thin wrappers (`return _implN(a, b)`), excluded from working items. Counted naively it would be 9 / 9 / 8 = FIRE. |
+| (k) private | shallow-module | `shal/private/core.py:1` | NO-FIRE | 8 / 8 / 9. 9 underscore helpers (used only inside) are working items, so hidden 9 > shown 8. If private helpers were ignored it would be 8 / 8 / 0 = FIRE. |
+| (l) grouped | shallow-module | `shal/grouped/core.py:1` | NO-FIRE | 9 / 4 / 6. Lists: 4 functions return in-unit `Ledger` (1 list of 4), 3 build in-unit `Journal` in the body (1 list of 3), 2 plain functions (2 lists) = 4 lists, largest 4. Total 15 = 11 functions + 4 methods (`Ledger.add/reset`, `Journal.record/clear`); classes not counted. See OPEN QUESTION 1. |
+| (l2) grouped_big (extra) | shallow-module | `shal/grouped_big/core.py:1` | FIRE | 9 / 1 / 4. All 9 shown functions return in-unit `Account` -> one list of 9 > 7 ("some list > 7"). Total 13 = 12 functions + `Account.deposit`. See OPEN QUESTION 1. |
+| (m1) boundary 8/8 | shallow-module | `shal/bound_fire/core.py:1` | FIRE | 8 / 8 / 8. shown 8 > 7, lists 8 > 7, hidden 8 <= shown 8. |
+| (m2) boundary 8/9 | shallow-module | `shal/bound_hidden/core.py:1` | NO-FIRE | 8 / 8 / 9. hidden 9 > shown 8. |
+| (m3) boundary 7/0 | shallow-module | `shal/bound_seven/core.py:1` | NO-FIRE | 7 / 7 / 0. shown 7 is not > 7. |
+| (n) methods | shallow-module | `shal/methods/engine.py:1` (sole module of the facade package) | NO-FIRE | 2 / 2 / 20. `Engine` has 20 methods and `app/use_methods.py` calls every one, but methods never count as shown; only `make_engine` and `describe` are imported (the class is not). Total 22 = 20 methods + 2 functions. |
+| (s) file module (extra) | shallow-module | `shalmod/flat.py:1` | FIRE | 9 / 9 / 6. Unit = file module. Same shape as (h). |
+| (t) tests only (extra) | shallow-module | `shal/shaltest/core.py:1` | NO-FIRE | 0 / 0 / 15. Same shape as (h) but the only importer is `tests/test_shaltest.py`; tests never count. |
+| (u) excluded kinds (extra) | shallow-module | `shal/excluded/core.py:1` | FIRE | 8 / 8 / 4. Hidden = 2 private functions + `Plain.bump`/`Plain.drop`. Excluded (not counted): 4 dunders + 4 property/setter defs in `Plain`, 8 methods of `Worker(threading.Thread)` (external base). If they were counted, hidden would be 20 > 8 and it would not fire. |
+| (w) data declaration (extra) | shallow-module | `shalmod/records.py:1` | NO-FIRE | 0 / 0 / 0. 17 classes (9 dataclasses, 4 NamedTuple, 4 TypedDict), all imported by `app/use_records.py`, no functions, no methods. Classes are not working items. If classes counted it would be 17 / 17 / 0 = FIRE. |
 
 ## 3. architecture/wide-directory (`deadcode scan`, warning)
 
@@ -77,9 +88,13 @@ Members = direct non-test source files + subdirectories containing source. More 
 
 ## OPEN QUESTIONS (not asserted by the rows above)
 
+0. **Facade skip and shown.** For the module unit `core.py` of a facade package, the re-export in `__init__.py`
+   and the consumers in `app/` are both "outside" the module; rows assume consumers via the package re-export
+   count as outside uses of `core.py` functions (shown 9 in (h)).
+
 1. **(l) wording.** The brief's "9 shown funcs all referencing ONE in-unit class ... lists<=7 and none >7 -> NO-FIRE"
    contradicts the frozen rule: 9 functions grouped under one class form ONE list of 9, which is `> 7`, i.e. FIRE.
-   I built (l) as 4 / 3 / 1 / 1 (NO-FIRE) and (l2) as the literal one-class-of-9 shape (FIRE). Lead to confirm
+   I built (l) as 4 / 3 / 1 / 1 lists (NO-FIRE) and (l2) as the literal one-class-of-9 shape (FIRE). Lead to confirm
    that (l2) = FIRE is intended ("some list > 7").
 2. **`__init__.py` as a directory member.** `widedirs/open_init16/` has `__init__.py` + 15 other files. It is 16
    members if `__init__.py` counts, 15 if not. Deliberately NOT asserted; record what the implementation does.

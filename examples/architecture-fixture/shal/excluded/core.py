@@ -1,4 +1,4 @@
-"""Case (u): 8 shown, 2 hidden functions, 2 hidden classes, 2 hidden methods.
+"""Case (u): 8 shown, 2 hidden functions, 2 hidden methods (classes are not working items).
 
 16 further members are excluded kinds (dunders, property/setter, methods of an external-base class).
 If they were counted, hidden would exceed shown and the rule would not fire.

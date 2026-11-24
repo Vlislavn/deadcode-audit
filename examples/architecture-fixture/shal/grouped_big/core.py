@@ -1,6 +1,14 @@
-"""Case (l2): 9 shown functions, all referencing Account -> 1 list of 9."""
+"""Case (l2): 9 shown functions, all referencing the in-unit class Account -> 1 list of 9."""
 
-from grouped_big.models import Account
+
+class Account:
+    def __init__(self) -> None:
+        self.balance = 0
+
+    def deposit(self, amount: int) -> int:
+        self.balance += amount
+        return self.balance
+
 
 def acct_op1(x: int) -> Account:
     account = Account()
