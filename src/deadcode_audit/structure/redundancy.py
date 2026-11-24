@@ -19,7 +19,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import diffscope, layout
 from deadcode_audit.framework import safe_parse
 from deadcode_audit.overlap import clones
 
@@ -288,14 +288,14 @@ def run_check(compare_branch: str, *, threshold: float, min_tokens: int) -> int:
     redundancies: list[RedundancyFinding] = []
     for path in changed_files:
         lines = changed_lines.get(path.as_posix(), set())
-        for finding in find_redundant_transforms(diffscope.read_text(path), path):
+        for finding in find_redundant_transforms(layout.read_text(path), path):
             if finding.line in lines:
                 redundancies.append(finding)
 
     # Clone detection: changed functions (touching a changed line) vs the whole src corpus.
     corpus: list[clones.FuncRecord] = []
-    for path in diffscope.runtime_files():
-        corpus.extend(clones.collect_functions(diffscope.read_text(path), path))
+    for path in layout.runtime_files():
+        corpus.extend(clones.collect_functions(layout.read_text(path), path))
     changed_set = {p.as_posix() for p in changed_files}
     targets = [
         rec

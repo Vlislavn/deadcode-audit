@@ -22,7 +22,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import diffscope, layout
 from deadcode_audit.gates import mutation
 
 _PLUGIN = '''
@@ -185,7 +185,7 @@ def _copy_scratch(scratch: Path) -> None:
     """Copy tracked plus untracked-but-not-ignored files of the repository into ``scratch``."""
     names = diffscope.git_output("ls-files", "-z", "--cached", "--others", "--exclude-standard").split("\0")
     for name in filter(None, names):
-        src = diffscope.REPO_ROOT / name
+        src = layout.REPO_ROOT / name
         if src.is_file():
             (scratch / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, scratch / name, follow_symlinks=False)
@@ -289,7 +289,7 @@ def run_audit(paths: list[Path]) -> Report:
     sources: dict[Path, str] = {}
     for path in paths:
         try:
-            raw[path] = (diffscope.REPO_ROOT / path).read_bytes()
+            raw[path] = (layout.REPO_ROOT / path).read_bytes()
             sources[path] = raw[path].decode("utf-8-sig")
             find_functions(sources[path])
         except (SyntaxError, UnicodeDecodeError, OSError) as exc:
@@ -305,7 +305,7 @@ def run_audit(paths: list[Path]) -> Report:
         plugin_dir.mkdir()
         (plugin_dir / "stub_cov_plugin.py").write_text(_PLUGIN, encoding="utf-8")
         data_file = scratch_parent / "stub.coverage"
-        source_dirs = [str(scratch / r) for r in diffscope.source_roots()]
+        source_dirs = [str(scratch / r) for r in layout.source_roots()]
         env = dict(
             os.environ,
             DEADCODE_REPO_ROOT=str(scratch),
@@ -394,9 +394,9 @@ def select_paths(explicit: list[str], compare_branch: str) -> list[Path]:
     paths = []
     for raw in explicit:
         resolved = Path(raw).resolve()
-        if not resolved.is_relative_to(diffscope.REPO_ROOT) or not resolved.is_file():
+        if not resolved.is_relative_to(layout.REPO_ROOT) or not resolved.is_file():
             raise HarnessError(f"not a file inside the repository: {raw}")
-        paths.append(resolved.relative_to(diffscope.REPO_ROOT))
+        paths.append(resolved.relative_to(layout.REPO_ROOT))
     return sorted(dict.fromkeys(paths))
 
 

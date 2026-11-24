@@ -1,4 +1,4 @@
-"""Shared git / diff-scope primitives for every dead-code tier.
+"""Shared git / diff-scope primitives for every dead-code tier (repo layout: :mod:`deadcode_audit.layout`).
 
 This is the single source of the merge-base / changed-line computation that all
 diff-scoped tiers (Vulture, redundancy, clones, runtime-consumer) use. It collapses
@@ -12,13 +12,11 @@ so a test monkeypatching ``diffscope.<fn>`` is seen at every use site.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
 
-_env_root = os.environ.get("DEADCODE_REPO_ROOT")
-REPO_ROOT: Path = Path(_env_root).resolve() if _env_root else Path.cwd().resolve()
+from deadcode_audit import layout
 
 _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
@@ -33,7 +31,7 @@ def _git_output(*args: str, strip: bool = True) -> str:
     """
     completed = subprocess.run(
         ["git", "-c", "core.quotepath=false", *args],
-        cwd=REPO_ROOT,
+        cwd=layout.REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -67,7 +65,7 @@ def _resolve_compare_ref(compare_branch: str) -> str:
     for candidate in candidates:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", candidate],
-            cwd=REPO_ROOT,
+            cwd=layout.REPO_ROOT,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -76,11 +74,6 @@ def _resolve_compare_ref(compare_branch: str) -> str:
         if result.returncode == 0:
             return candidate
     raise RuntimeError(f"Unable to resolve compare branch '{compare_branch}'")
-
-
-def is_runtime_python_path(path: Path) -> bool:
-    """Return True when a path belongs to runtime Python sources."""
-    return path.suffix == ".py" and any(path.is_relative_to(root) for root in source_roots()) and not is_test_path(path)
 
 
 def changed_files(compare_branch: str, *, suffixes: frozenset[str]) -> list[Path]:
@@ -93,7 +86,7 @@ def changed_files(compare_branch: str, *, suffixes: frozenset[str]) -> list[Path
         path = Path(line)
         if path.suffix not in suffixes:
             continue
-        if not (REPO_ROOT / path).exists():
+        if not (layout.REPO_ROOT / path).exists():
             continue
         files.append(path)
     return files
@@ -106,7 +99,7 @@ def changed_python_files(compare_branch: str) -> list[Path]:
 
 def changed_src_python_files(compare_branch: str) -> list[Path]:
     """Return changed runtime ``src`` Python files relative to the compare branch."""
-    return [path for path in changed_python_files(compare_branch) if is_runtime_python_path(path)]
+    return [path for path in changed_python_files(compare_branch) if layout.is_runtime_python_path(path)]
 
 
 def parse_added_lines(diff_text: str) -> set[int]:
@@ -149,38 +142,3 @@ def added_lines_by_file(compare_branch: str, paths: list[Path]) -> dict[str, set
         diff_text = _git_output("diff", "-U0", f"{merge_base}..HEAD", "--", path.as_posix())
         changed_lines_by_file[path.as_posix()] = parse_added_lines(diff_text)
     return changed_lines_by_file
-
-
-def read_text(path: Path) -> str:
-    """Read a repo-relative file as UTF-8."""
-    return (REPO_ROOT / path).read_text(encoding="utf-8-sig")
-
-
-def project_paths(key: str, defaults: list[Path]) -> list[Path]:
-    from deadcode_audit.config import load_deadcode_config
-    values = load_deadcode_config(REPO_ROOT).project.get(key)
-    return [Path(v) for v in values] if values is not None else defaults
-
-
-def source_roots() -> list[Path]:
-    defaults = [Path(p) for p in ("src", "scripts") if (REPO_ROOT / p).is_dir()]
-    return project_paths("source_roots", defaults or [Path(".")])
-
-
-def is_test_path(path: Path) -> bool:
-    return any(path.is_relative_to(root) for root in project_paths("test_roots", [Path("tests")])) or "tests" in path.parts or path.name.startswith("test_")
-
-
-def runtime_files(*, suffixes: frozenset[str] = frozenset({".py"})) -> list[Path]:
-    excluded = {".git", ".venv", "venv", ".runtime", "node_modules", "__pycache__", "mutants"}
-    result = set()
-    for root in source_roots():
-        full = REPO_ROOT / root
-        if not full.exists():
-            raise ValueError(f"Configured source root does not exist: {root}")
-        paths = [full] if full.is_file() else full.rglob("*")
-        for path in paths:
-            rel = path.relative_to(REPO_ROOT)
-            if path.is_file() and path.suffix in suffixes and not (set(rel.parts) & excluded) and not is_test_path(rel):
-                result.add(rel)
-    return sorted(result)

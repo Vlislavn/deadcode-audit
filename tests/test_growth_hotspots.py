@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from deadcode_audit import cli, diffscope
+from deadcode_audit import cli, layout
 from deadcode_audit.gates import growth
 
 BRANCHY = (
@@ -55,7 +55,7 @@ def repo(tmp_path, monkeypatch):
     commit(tmp_path, big=FLAT, tests__test_hot="def test_x():\n    pass\n")
     commit(tmp_path, hot=BRANCHY.format(n=1))
     commit(tmp_path, hot=BRANCHY.format(n=2))
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     return tmp_path
 
 

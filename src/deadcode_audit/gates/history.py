@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 
 HISTORY_PATH = Path("evals/deadcode/score-history.jsonl")
 _SPARK_TICKS = "▁▂▃▄▅▆▇█"
@@ -51,7 +51,7 @@ def append_record(record: HistoryRecord, path: Path | None = None) -> None:
     is no cross-process lock, so two truly simultaneous scans could interleave. The reader
     tolerates a torn line (:func:`read_records`), which bounds the damage to one record.
     """
-    target = path or (diffscope.REPO_ROOT / HISTORY_PATH)
+    target = path or (layout.REPO_ROOT / HISTORY_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record_to_dict(record), sort_keys=True) + "\n")
@@ -85,7 +85,7 @@ def read_records(path: Path | None = None) -> list[HistoryRecord]:
     A corrupt line (torn append, manual edit, schema drift) is skipped with a stderr warning
     instead of failing the whole trend read — one bad line must not erase the history view.
     """
-    target = path or (diffscope.REPO_ROOT / HISTORY_PATH)
+    target = path or (layout.REPO_ROOT / HISTORY_PATH)
     if not target.exists():
         return []
     records: list[HistoryRecord] = []

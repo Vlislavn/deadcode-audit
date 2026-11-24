@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 from deadcode_audit.js import javascript
 
 CANNED = Path(__file__).parent / "fixtures" / "jscpd_report.json"
@@ -27,7 +27,7 @@ else:
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path.resolve())
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path.resolve())
     return tmp_path.resolve()
 
 
@@ -42,7 +42,7 @@ def canned_report(root):
 
 def canned_inputs(report):
     return {
-        Path(clone[side]["name"]).relative_to(diffscope.REPO_ROOT).as_posix(): b"\n" * 700
+        Path(clone[side]["name"]).relative_to(layout.REPO_ROOT).as_posix(): b"\n" * 700
         for clone in report["duplicates"]
         for side in ("firstFile", "secondFile")
     }

@@ -50,16 +50,16 @@ def test_missing_target_and_bad_config_are_errors(tmp_path):
 
 
 def test_installed_vulture_runs_on_nested_sources(tmp_path):
-    from deadcode_audit import diffscope
+    from deadcode_audit import layout
     from deadcode_audit.structure import vulture_gate
     source = project(tmp_path)
     (source / 'unused.py').write_text('def unused_function():\n    return 42\n')
-    previous = diffscope.REPO_ROOT
+    previous = layout.REPO_ROOT
     try:
-        diffscope.REPO_ROOT = tmp_path
+        layout.REPO_ROOT = tmp_path
         output = vulture_gate._run_vulture(60)
     finally:
-        diffscope.REPO_ROOT = previous
+        layout.REPO_ROOT = previous
     assert 'unused_function' in output
 
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope
+from deadcode_audit import config, diffscope, layout
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -145,11 +145,11 @@ def build_mutation_targets(paths: list[Path], *, compare_branch: str | None = No
     merge_base, originals = _merge_base_files(compare_branch)
     selected = []
     for path in targets:
-        current = ast.dump(ast.parse((diffscope.REPO_ROOT / path).read_bytes()), include_attributes=False)
+        current = ast.dump(ast.parse((layout.REPO_ROOT / path).read_bytes()), include_attributes=False)
         if path.as_posix() not in originals:
             selected.append(path)
             continue
-        original = subprocess.check_output(["git", "show", f"{merge_base}:{path.as_posix()}"], cwd=diffscope.REPO_ROOT)
+        original = subprocess.check_output(["git", "show", f"{merge_base}:{path.as_posix()}"], cwd=layout.REPO_ROOT)
         if ast.dump(ast.parse(original), include_attributes=False) != current:
             selected.append(path)
     return selected
@@ -190,13 +190,13 @@ def build_touched_lines(targets: list[Path], compare_branch: str) -> dict[str, f
         name = path.as_posix()
         if name not in originals:
             continue
-        dirty = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", name], cwd=diffscope.REPO_ROOT, check=False)
+        dirty = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", name], cwd=layout.REPO_ROOT, check=False)
         if dirty.returncode != 0:
             print(f"{name}: working tree differs from HEAD, mutating whole file", file=sys.stderr)
             continue
         diff_text = diffscope._git_output("diff", "-U0", f"{merge_base}..HEAD", "--", name)
         changed = diffscope.parse_touched_lines(diff_text)
-        spans = mutation_unit_spans((diffscope.REPO_ROOT / path).read_text(encoding="utf-8"))
+        spans = mutation_unit_spans((layout.REPO_ROOT / path).read_text(encoding="utf-8"))
         selected = [(lo, hi) for lo, hi in spans if any(lo <= line <= hi for line in changed)]
         covered = {line for lo, hi in selected for line in range(lo, hi + 1)}
         if changed - {line for lo, hi in spans for line in range(lo, hi + 1)}:
@@ -207,7 +207,7 @@ def build_touched_lines(targets: list[Path], compare_branch: str) -> dict[str, f
 
 def build_mutation_copy_roots(paths: list[Path]) -> list[Path]:
     """Return broad source roots that mutmut must copy to run tests."""
-    roots = diffscope.project_paths("mutation_roots", diffscope.source_roots())
+    roots = layout.project_paths("mutation_roots", layout.source_roots())
     return sorted({root for root in roots if any(path == root or path.is_relative_to(root) for path in paths)})
 
 
@@ -221,7 +221,7 @@ def build_also_copy(base: list[Path], copy_roots: list[Path]) -> list[Path]:
     the whole gate with FileNotFoundError before any mutant runs (red-from-birth
     on every src-only PR).
     """
-    extras = diffscope.project_paths("mutation_also_copy", [])
+    extras = layout.project_paths("mutation_also_copy", [])
     return [p for p in dict.fromkeys([*base, *extras]) if p not in copy_roots]
 
 
@@ -257,8 +257,8 @@ def build_mutation_test_roots(paths: list[Path]) -> list[str]:
     their behaviour, so they survive as false positives. In that case fall back to the
     full unit+scripts suite (which is a superset of the narrow roots).
     """
-    mapping = config.load_deadcode_config(diffscope.REPO_ROOT).project.get("mutation_test_map", {})
-    default_roots = [p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")])]
+    mapping = config.load_deadcode_config(layout.REPO_ROOT).project.get("mutation_test_map", {})
+    default_roots = [p.as_posix() for p in layout.project_paths("test_roots", [Path("tests")])]
     matched = []
     for path in paths:
         choices = [(prefix, tests) for prefix, tests in mapping.items() if path.is_relative_to(Path(prefix))]
@@ -275,7 +275,7 @@ def _configure_mutation_for_paths(paths: list[Path]) -> Config:
     config_obj = Config.get()
     config_obj.source_paths = build_mutation_copy_roots(paths)
     config_obj.resolved_mutated_source_paths = [
-        diffscope.REPO_ROOT / "mutants" / root for root in config_obj.source_paths
+        layout.REPO_ROOT / "mutants" / root for root in config_obj.source_paths
     ]
     config_obj.only_mutate = [path.as_posix() for path in paths]
     config_obj.also_copy = build_also_copy(list(config_obj.also_copy), config_obj.source_paths)
@@ -292,7 +292,7 @@ def _configure_mutation_for_paths(paths: list[Path]) -> Config:
 
 def _reset_mutants_dir() -> None:
     """Remove persisted mutmut state so each gate run reflects current results."""
-    mutants_dir = diffscope.REPO_ROOT / "mutants"
+    mutants_dir = layout.REPO_ROOT / "mutants"
     if mutants_dir.exists():
         shutil.rmtree(mutants_dir)
 
@@ -396,8 +396,8 @@ def _patch_pass_isolation() -> None:
 def _purge_original_source_modules() -> None:
     """Make test imports use copied sources, including the gate's own targets."""
     roots = [
-        *(diffscope.REPO_ROOT / root for root in diffscope.source_roots()),
-        *(diffscope.REPO_ROOT / root for root in diffscope.project_paths("import_roots", []) if root != Path(".")),
+        *(layout.REPO_ROOT / root for root in layout.source_roots()),
+        *(layout.REPO_ROOT / root for root in layout.project_paths("import_roots", []) if root != Path(".")),
         Path(__file__).resolve().parent,
     ]
     for name, module in list(sys.modules.items()):
@@ -445,7 +445,7 @@ def _run_mutmut_for_paths(paths: list[Path], touched: dict[str, frozenset[int]] 
         print("No mutation targets changed vs compare branch")
         return 0
 
-    os.chdir(diffscope.REPO_ROOT)
+    os.chdir(layout.REPO_ROOT)
     _reset_mutants_dir()
     _preimport_native_libs()
     _configure_mutation_for_paths(paths)

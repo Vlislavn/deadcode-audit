@@ -115,8 +115,8 @@ def test_render_human_shows_embed_na_when_pass1_only() -> None:
 
 def test_build_corpus_captures_source(monkeypatch: pytest.MonkeyPatch) -> None:
     module_src = "def alpha():\n    return 1\n\n\ndef beta(x):\n    return x + 1\n"
-    monkeypatch.setattr(overlaps.diffscope, "runtime_files", lambda **_: [Path("src/m.py")])
-    monkeypatch.setattr(overlaps.diffscope, "read_text", lambda _p: module_src)
+    monkeypatch.setattr(overlaps.layout, "runtime_files", lambda **_: [Path("src/m.py")])
+    monkeypatch.setattr(overlaps.layout, "read_text", lambda _p: module_src)
     funcs = overlaps.build_corpus()
     by_symbol = {f.record.symbol: f for f in funcs}
     assert by_symbol["alpha"].source == ast.get_source_segment(module_src, ast.parse(module_src).body[0])
@@ -125,8 +125,8 @@ def test_build_corpus_captures_source(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_build_corpus_none_segment_falls_back_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     module_src = "def alpha():\n    return 1\n"
-    monkeypatch.setattr(overlaps.diffscope, "runtime_files", lambda **_: [Path("src/m.py")])
-    monkeypatch.setattr(overlaps.diffscope, "read_text", lambda _p: module_src)
+    monkeypatch.setattr(overlaps.layout, "runtime_files", lambda **_: [Path("src/m.py")])
+    monkeypatch.setattr(overlaps.layout, "read_text", lambda _p: module_src)
     monkeypatch.setattr(overlaps.ast, "get_source_segment", lambda *_a, **_k: None)  # force the fail-open path
     funcs = overlaps.build_corpus()
     assert funcs and all(f.source == "" for f in funcs)  # None -> "" , never a crash
@@ -256,7 +256,7 @@ def test_cli_no_embed_never_loads_model(monkeypatch: pytest.MonkeyPatch, capsys:
 
 
 def _python_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> list[overlaps._SourcedFunc]:
-    monkeypatch.setattr(overlaps.diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(overlaps.layout, "REPO_ROOT", tmp_path)
     (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "m.py").write_text(body, encoding="utf-8")
@@ -330,7 +330,7 @@ def test_python_thin_call_site_is_dropped_but_a_caller_with_own_logic_is_kept(
 
 
 def test_python_test_paths_are_excluded_from_explicit_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(overlaps.diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(overlaps.layout, "REPO_ROOT", tmp_path)
     (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
     (tmp_path / "src" / "tests").mkdir(parents=True)
     (tmp_path / "src" / "m.py").write_text("def kept(x):\n    return x\n")

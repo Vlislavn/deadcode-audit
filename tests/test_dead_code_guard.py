@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from deadcode_audit import cli, diffscope
+from deadcode_audit import cli, diffscope, layout
 from deadcode_audit.gates import mutation
 from deadcode_audit.structure import reachability, vulture_gate
 from deadcode_audit.overlap.clones import CloneFinding  # noqa: F401  (kept importable for downstream tests)
@@ -55,7 +55,7 @@ def configured_project(tmp_path, monkeypatch):
     (tmp_path / ".deadcode.yml").write_text(yaml.safe_dump({"project": project}))
     (tmp_path / "src").mkdir()
     (tmp_path / "scripts").mkdir()
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
 
 
 # A file inside the dead-code module: the mutation gate's generalised self-target.
@@ -223,15 +223,15 @@ def test_native_mutation_config_selects_exact_files_and_existing_test_roots(
     from mutmut.configuration import Config
 
     for target in targets:
-        file = diffscope.REPO_ROOT / target
+        file = layout.REPO_ROOT / target
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("def answer():\n    return 42\n", encoding="utf-8")
     for test_root in test_roots:
-        (diffscope.REPO_ROOT / test_root).mkdir(parents=True, exist_ok=True)
-    (diffscope.REPO_ROOT / "pyproject.toml").write_text(
+        (layout.REPO_ROOT / test_root).mkdir(parents=True, exist_ok=True)
+    (layout.REPO_ROOT / "pyproject.toml").write_text(
         '[tool.mutmut]\nsource_paths = ["src", "scripts"]\n', encoding="utf-8"
     )
-    monkeypatch.chdir(diffscope.REPO_ROOT)
+    monkeypatch.chdir(layout.REPO_ROOT)
     native_config = Config.get()
     original = vars(native_config).copy()
     try:
@@ -241,7 +241,7 @@ def test_native_mutation_config_selects_exact_files_and_existing_test_roots(
         assert configured is native_config
         assert configured.source_paths == build_mutation_copy_roots(targets)
         assert configured.resolved_mutated_source_paths == [
-            diffscope.REPO_ROOT / "mutants" / root for root in configured.source_paths
+            layout.REPO_ROOT / "mutants" / root for root in configured.source_paths
         ]
         assert configured.only_mutate == [path.as_posix() for path in targets]
         assert configured.pytest_add_cli_args_test_selection == test_roots
@@ -676,7 +676,7 @@ def test_public_symbol_definitions_flags_decorated_and_includes_private(
     The old gate dropped all decorated symbols (silent pass for decorated-but-dead code). Now they
     are surfaced with a flag that only downgrades them to advisory, never grants a free pass.
     """
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     module = tmp_path / "m.py"
     module.write_text(
         "@router.post('/p')\n"

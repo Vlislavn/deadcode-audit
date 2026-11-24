@@ -29,7 +29,7 @@ import sys
 from collections import deque
 from typing import TYPE_CHECKING, NamedTuple
 
-from deadcode_audit import config, diffscope
+from deadcode_audit import config, layout
 from deadcode_audit.framework import safe_parse
 from deadcode_audit.structure.reachability import (
     _resolve_relative,
@@ -48,7 +48,7 @@ HELD_IN_MIND = 7  # lists of ties / circle nodes longer than this are capped wit
 def _internal_nodes() -> dict[str, Path]:
     """Map every ``src/`` module's dotted name to its file (the import-graph node set)."""
     nodes: dict[str, Path] = {}
-    for path in diffscope.runtime_files():
+    for path in layout.runtime_files():
         dotted = module_dotted_name(path)
         if dotted is not None:
             nodes[dotted] = path
@@ -153,7 +153,7 @@ def collect_ties() -> tuple[list[Tie], int]:
     acc: dict[tuple[str, str, bool], Tie] = {}
     unparsed = 0
     for dotted, path in nodes.items():
-        tree = safe_parse(diffscope.read_text(path))
+        tree = safe_parse(layout.read_text(path))
         if tree is None:
             print(
                 f"warning: {path.as_posix()} does not parse; treating as no imports",
@@ -466,7 +466,7 @@ def run(*, as_json: bool, advisory: bool, strict_lazy: bool = False) -> int:
     accepted cycles still blocks any NEW one (the ratchet pattern). SOFT cycles (broken by a function-local
     import) are listed but never block unless ``strict_lazy`` is set; package-level cycles are advisory only.
     """
-    allowed = [set(entry.split(" <-> ")) for entry in config.load_deadcode_config(diffscope.REPO_ROOT).allowed_cycles]
+    allowed = [set(entry.split(" <-> ")) for entry in config.load_deadcode_config(layout.REPO_ROOT).allowed_cycles]
     ties, unparsed = collect_ties()
     graph = build_import_graph(ties=ties)
     top_graph = graph if strict_lazy else build_import_graph(ties=ties, include_lazy=False)

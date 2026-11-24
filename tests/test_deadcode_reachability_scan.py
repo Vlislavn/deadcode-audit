@@ -191,7 +191,7 @@ def test_scan_honors_configured_whitelist_but_still_reports_similar_dead_name(tm
 def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_broken(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from deadcode_audit import diffscope
+    from deadcode_audit import layout
     from deadcode_audit.structure import reachability
 
     (tmp_path / "ok.py").write_text("alpha\n_.beta\n# gamma\n", encoding="utf-8")
@@ -199,7 +199,7 @@ def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_br
     (tmp_path / ".deadcode.yml").write_text(
         "project:\n  vulture_whitelist: [ok.py, broken.py, missing.py]\n", encoding="utf-8"
     )
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     assert reachability.vulture_whitelist_names() >= {"alpha", "beta"}
     assert "gamma" not in reachability.vulture_whitelist_names()
 

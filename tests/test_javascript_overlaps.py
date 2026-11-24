@@ -10,14 +10,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 from deadcode_audit.overlap import clones, overlap_embed, overlaps
 from deadcode_audit.cli import main
 from deadcode_audit.js.collect import collect_functions_with_blind
 
 
 def sources(tmp_path, monkeypatch):
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     source = tmp_path / "src"
     source.mkdir()
     (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
@@ -46,7 +46,7 @@ def test_default_and_explicit_corpus_collect_js_ts_and_python(tmp_path, monkeypa
 def test_bom_and_crlf_offsets_are_relative_to_actual_captured_bytes(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     raw = b"\xef\xbb\xbfconst marker = 1;\r\nmodule.exports = (value) => {\r\n  return api.echo(value);\r\n};\r\n"
     (tmp_path / "entry.cjs").write_bytes(raw)
     [function] = overlaps.build_corpus(["entry.cjs"])
@@ -257,7 +257,7 @@ def test_same_file_containment_is_filtered_before_scoring_but_siblings_and_other
     )
     (source / "first.js").write_text(text)
     (source / "second.js").write_text(text)
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     corpus = overlaps.build_corpus(["src"])
     assert len(corpus) == 8
 
@@ -474,7 +474,7 @@ _JS_POLLERS = (
 
 
 def _js_pairs(tmp_path, monkeypatch, files):
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n")
     (tmp_path / "src").mkdir()
     for name, text in files.items():
@@ -509,7 +509,7 @@ def test_js_call_through_import_alias_and_member_access_names_the_imported_funct
 
 def test_js_test_files_and_directories_are_not_corpus_functions(tmp_path, monkeypatch):
     body = "export function f(value) { return api.echo(value, { a: 1, b: 2 }); }\n"
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     (tmp_path / ".deadcode.yml").write_text("project:\n  source_roots: [src]\n  test_roots: [spec]\n")
     for name in ("keep.js", "x.test.jsx", "testSetup.js", "__tests__/y.js"):
         path = tmp_path / "src" / name

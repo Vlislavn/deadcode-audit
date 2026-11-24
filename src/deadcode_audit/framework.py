@@ -94,14 +94,14 @@ def safe_parse(source: str) -> ast.Module | None:
 
 def build_file_context(path: Path, source: str) -> FileContext:
     """Parse ``source`` into a shared :class:`FileContext` (raises ``SyntaxError`` on bad syntax)."""
-    from deadcode_audit import diffscope  # deferred: keeps the framework's import graph minimal
+    from deadcode_audit import layout  # deferred: keeps the framework's import graph minimal
 
     return FileContext(
         path=path,
         source=source,
         tree=ast.parse(source),
         lines=tuple(source.splitlines()),
-        is_test_file=diffscope.is_test_path(path),
+        is_test_file=layout.is_test_path(path),
     )
 
 

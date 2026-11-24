@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 from deadcode_audit.diagnostic import (
     ENGINE_CODE_QUALITY,
     Diagnostic,
@@ -73,7 +73,7 @@ RULE_SPECS = (*_OXLINT_SPECS, DUPLICATE_RULE)
 
 
 def is_js_test_file(path: Path) -> bool:
-    """``*.test.js(x)``, ``*.testkit.js(x)``, ``testSetup.js`` and anything under ``__tests__/`` (Python tests: ``diffscope.is_test_path``)."""
+    """``*.test.js(x)``, ``*.testkit.js(x)``, ``testSetup.js`` and anything under ``__tests__/`` (Python tests: ``layout.is_test_path``)."""
     return "__tests__" in path.parts or path.name.endswith(TEST_FILE_SUFFIXES)
 
 
@@ -87,7 +87,7 @@ def _run(executable: str, arguments: list[str], tool: str = "Oxlint", cwd: Path 
         )
     result = subprocess.run(
         [executable, *arguments],
-        cwd=cwd or diffscope.REPO_ROOT,
+        cwd=cwd or layout.REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -162,11 +162,11 @@ def _diagnostic(row: dict, inputs: dict[str, bytes]) -> Diagnostic:
         raise ValueError("Oxlint diagnostic filename is missing")
     path = Path(filename)
     absolute = (
-        path.resolve() if path.is_absolute() else (diffscope.REPO_ROOT / path).resolve()
+        path.resolve() if path.is_absolute() else (layout.REPO_ROOT / path).resolve()
     )
-    if not absolute.is_relative_to(diffscope.REPO_ROOT):
+    if not absolute.is_relative_to(layout.REPO_ROOT):
         raise ValueError("Oxlint reported a path outside the target")
-    relative = absolute.relative_to(diffscope.REPO_ROOT).as_posix()
+    relative = absolute.relative_to(layout.REPO_ROOT).as_posix()
     if relative not in inputs:
         raise ValueError("Oxlint reported a file outside the explicit batch")
     code = row.get("code")
@@ -242,11 +242,11 @@ def run(files: list[Path]) -> list[Diagnostic]:
         return []
     captured = {}
     for path in files:
-        absolute = diffscope.REPO_ROOT / path
+        absolute = layout.REPO_ROOT / path
         if (
             path.suffix not in SUFFIXES
             or absolute.is_symlink()
-            or not absolute.resolve().is_relative_to(diffscope.REPO_ROOT)
+            or not absolute.resolve().is_relative_to(layout.REPO_ROOT)
         ):
             raise ValueError(
                 "JS input must be a supported regular file inside the target"
@@ -265,7 +265,7 @@ def run(files: list[Path]) -> list[Diagnostic]:
             findings.extend(_batch(executable, config_path, inputs))
     findings.extend(_duplicates(captured))
     if any(
-        (diffscope.REPO_ROOT / path).read_bytes() != raw
+        (layout.REPO_ROOT / path).read_bytes() != raw
         for path, raw in captured.items()
     ):
         raise ValueError("JS source changed during analysis; no findings are accepted")
@@ -295,7 +295,7 @@ def _range(side: object, inputs: dict[str, bytes]) -> tuple[str, int, int]:
     if not isinstance(name, str) or type(start) is not int or type(end) is not int:
         raise ValueError("jscpd clone location is malformed")
     path = Path(name).resolve()
-    relative = path.relative_to(diffscope.REPO_ROOT).as_posix() if path.is_relative_to(diffscope.REPO_ROOT) else None
+    relative = path.relative_to(layout.REPO_ROOT).as_posix() if path.is_relative_to(layout.REPO_ROOT) else None
     if relative not in inputs:
         raise ValueError("jscpd reported a file outside the explicit batch")
     if not 1 <= start <= end <= inputs[relative].count(b"\n") + 1:
@@ -368,7 +368,7 @@ def _duplicate_diagnostics(report: object, inputs: dict[str, bytes]) -> list[Dia
 def _duplicates(captured: dict[str, bytes]) -> list[Diagnostic]:
     """Optional jscpd pass over non-test JS/JSX: one finding per transitive clone cluster."""
     inputs = {path: raw for path, raw in captured.items()
-              if path.endswith(JS_JSX_SUFFIXES) and not is_js_test_file(Path(path)) and not diffscope.is_test_path(Path(path))}
+              if path.endswith(JS_JSX_SUFFIXES) and not is_js_test_file(Path(path)) and not layout.is_test_path(Path(path))}
     executable = _jscpd_executable() if inputs else None
     if executable is None:
         return []
@@ -378,7 +378,7 @@ def _duplicates(captured: dict[str, bytes]) -> list[Diagnostic]:
         result = _run(executable, [
             "--cross-formats", "javascript,jsx", "--min-tokens", "50", "--min-lines", "5", "--absolute", "--no-gitignore",
             "--reporters", "json", "--output", temporary, "--silent",
-            *(str(diffscope.REPO_ROOT / path) for path in sorted(inputs)),
+            *(str(layout.REPO_ROOT / path) for path in sorted(inputs)),
         ], "jscpd", Path(temporary), JSCPD_EMPTY_WARNING)
         if result.returncode != 0:
             raise ValueError("jscpd process failed instead of completing analysis")

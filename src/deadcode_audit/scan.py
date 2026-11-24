@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope
+from deadcode_audit import config, diffscope, layout
 from deadcode_audit.framework import Detector, run_detectors
 from deadcode_audit.js import javascript
 from deadcode_audit.scoring import (
@@ -57,14 +57,14 @@ def _iter_source_files(targets: list[Path]) -> list[Path]:
     files: list[Path] = []
     seen: set[Path] = set()
     for target in targets:
-        abs_target = (diffscope.REPO_ROOT / target).resolve()
-        if not abs_target.is_relative_to(diffscope.REPO_ROOT) or not abs_target.exists():
+        abs_target = (layout.REPO_ROOT / target).resolve()
+        if not abs_target.is_relative_to(layout.REPO_ROOT) or not abs_target.exists():
             raise ValueError(f"Target missing or outside checkout: {target}")
         if abs_target.is_dir():
-            relative = (p.relative_to(diffscope.REPO_ROOT) for p in sorted(abs_target.rglob("*")) if p.is_file())
+            relative = (p.relative_to(layout.REPO_ROOT) for p in sorted(abs_target.rglob("*")) if p.is_file())
             candidates = (p for p in relative if p.suffix in SOURCE_SUFFIXES and not _SKIPPED_DIRS & set(p.parts))
         elif abs_target.suffix in SOURCE_SUFFIXES:
-            candidates = (abs_target.relative_to(diffscope.REPO_ROOT),)
+            candidates = (abs_target.relative_to(layout.REPO_ROOT),)
         else:
             continue  # unsupported file target: nothing to scan (unchanged behaviour)
         for rel in candidates:
@@ -84,17 +84,17 @@ def resolve_target_files(
     """Resolve scan/CI sources; other Python-only commands retain their discovery."""
     if changed:
         files = [path for path in diffscope.changed_files(compare_branch, suffixes=SOURCE_SUFFIXES)
-                 if any(path.is_relative_to(root) for root in diffscope.source_roots())
-                 and not diffscope.is_test_path(path)]
+                 if any(path.is_relative_to(root) for root in layout.source_roots())
+                 and not layout.is_test_path(path)]
     else:
-        files = _iter_source_files([Path(p) for p in paths]) if paths else diffscope.runtime_files(suffixes=SOURCE_SUFFIXES)
+        files = _iter_source_files([Path(p) for p in paths]) if paths else layout.runtime_files(suffixes=SOURCE_SUFFIXES)
     if exclude:
         files = [f for f in files if not any(fnmatch.fnmatch(f.as_posix(), pat) for pat in exclude)]
     return files
 
 
 def _python_diagnostics(files: list[Path], detectors: Sequence[Detector], dead_symbols: bool) -> list[Diagnostic]:
-    sources = [(path, diffscope.read_text(path)) for path in files]
+    sources = [(path, layout.read_text(path)) for path in files]
     diagnostics = run_detectors(sources, detectors)
     if dead_symbols:
         diagnostics += reachability_scan.dead_symbol_diagnostics(files)

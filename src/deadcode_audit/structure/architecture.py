@@ -28,7 +28,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 from deadcode_audit.detectors import thin_wrapper
 from deadcode_audit.diagnostic import (
     ENGINE_CODE_QUALITY,
@@ -200,7 +200,7 @@ def _lists(
 
 def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
     """One advisory warning per shallow unit whose report location is among ``files`` (whole-tree judgement)."""
-    sources = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
+    sources = {path: layout.read_text(path) for path in runtime_corpus_files()}
     trees = {path: safe_parse(text) for path, text in sources.items()}
     by_path = {path: collect_module_facts(text, path, trees[path]) for path, text in sources.items()}
     facts = list(by_path.values())
@@ -265,10 +265,10 @@ def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
     JavaScript or TypeScript) lies under it, at its
     ``__init__.py`` if present, else at the directory itself.
     """
-    roots = set(diffscope.source_roots())
+    roots = set(layout.source_roots())
     file_members: dict[Path, list[str]] = defaultdict(list)
     dir_members: dict[Path, set[str]] = defaultdict(set)
-    for path in diffscope.runtime_files(suffixes=javascript.SUFFIXES | {".py"}):
+    for path in layout.runtime_files(suffixes=javascript.SUFFIXES | {".py"}):
         if path.name == "__init__.py" or _is_test_source(path):
             continue  # a package marker is not a member; test files are not members
         file_members[path.parent].append(path.name)
@@ -286,7 +286,7 @@ def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
         diagnostics.append(
             diagnostic_from_spec(
                 WIDE_DIRECTORY_RULE,
-                file_path=(init if (diffscope.REPO_ROOT / init).is_file() else directory).as_posix(),
+                file_path=(init if (layout.REPO_ROOT / init).is_file() else directory).as_posix(),
                 line=1,
                 message=f"directory '{directory.as_posix()}' has {len(names) + len(subdirs)} direct members "
                 f"({len(names)} files, {len(subdirs)} subdirectories; limit {MEMBERS_LIMIT})",

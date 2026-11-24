@@ -32,7 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope, scan
+from deadcode_audit import config, layout, scan
 from deadcode_audit.framework import safe_parse
 from deadcode_audit.js import javascript
 from deadcode_audit.overlap import blind, clones
@@ -85,25 +85,25 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     funcs: list[_SourcedFunc] = []
     if paths:
         selected = scan.resolve_target_files(paths, changed=False, compare_branch="main",
-                                             exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+                                             exclude=config.load_deadcode_config(layout.REPO_ROOT).exclude)
     else:
-        python = diffscope.runtime_files()
+        python = layout.runtime_files()
         candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
-                                               exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
+                                               exclude=config.load_deadcode_config(layout.REPO_ROOT).exclude)
         selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
     # Tests are repetitive by design and every other command skips them; explicit paths and JS test names bypassed the filter.
-    selected = [path for path in selected if not (diffscope.is_test_path(path) or javascript.is_js_test_file(path))]
+    selected = [path for path in selected if not (layout.is_test_path(path) or javascript.is_js_test_file(path))]
     for path in selected:
         if path.suffix in javascript.SUFFIXES:
             from deadcode_audit.js.collect import collect_functions_with_blind
-            source = (diffscope.REPO_ROOT / path).read_bytes().decode("utf-8")
+            source = (layout.REPO_ROOT / path).read_bytes().decode("utf-8")
             try:
                 funcs.extend(_SourcedFunc(record, text, blind_text)
                              for record, text, blind_text in collect_functions_with_blind(source, path))
             except SyntaxError:  # ai-slop: ignore[swallowed-exception] stderr warning + skip: one malformed file never aborts the audit
                 print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
-        source = diffscope.read_text(path)
+        source = layout.read_text(path)
         tree = safe_parse(source)
         if tree is None:
             # One malformed file must not crash the whole audit; warn and skip it.

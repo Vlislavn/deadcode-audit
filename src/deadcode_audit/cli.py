@@ -11,7 +11,7 @@ import argparse
 import sys
 from typing import TYPE_CHECKING, Any
 
-from deadcode_audit import config, diffscope, output
+from deadcode_audit import config, diffscope, layout, output
 from deadcode_audit import scan as scan_mod
 from deadcode_audit.diagnostic import Severity
 from deadcode_audit.gates import history, mutation
@@ -86,7 +86,7 @@ def _execute_scan(args: argparse.Namespace) -> tuple[scan_mod.ScanResult, config
     """
     from deadcode_audit.detectors import ALL_DETECTORS
 
-    cfg = config.load_deadcode_config(diffscope.REPO_ROOT)
+    cfg = config.load_deadcode_config(layout.REPO_ROOT)
     files = scan_mod.resolve_target_files(
         args.paths,
         changed=args.changed,
@@ -173,7 +173,7 @@ def _cmd_security(args: argparse.Namespace) -> int:
     from deadcode_audit.detectors import exceptions, security
 
     paths = args.paths
-    if any(not (diffscope.REPO_ROOT / path).exists() for path in paths):
+    if any(not (layout.REPO_ROOT / path).exists() for path in paths):
         print("Security scan target does not exist", file=sys.stderr)
         return 1
     files = [f for f in scan_mod.resolve_target_files(paths, changed=False, compare_branch="main", exclude=())

@@ -24,7 +24,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import layout
 from deadcode_audit.diagnostic import (
     ENGINE_REACHABILITY,
     Diagnostic,
@@ -84,7 +84,7 @@ _DOTTED_PATH = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)+")  # "pkg.module.Name"
 def build_candidates() -> list[PublicSymbolDefinition]:
     """Every public top-level symbol in ``src/`` — the whole-tree corpus (NOT diff-scoped)."""
     candidates: list[PublicSymbolDefinition] = []
-    for path in diffscope.runtime_files():
+    for path in layout.runtime_files():
         candidates.extend(public_symbol_definitions(path))
     return candidates
 
@@ -102,8 +102,8 @@ def _occurrence_index(corpus_text: dict[Path, str], names: set[str]) -> dict[str
 def _test_reference_names(names: set[str]) -> set[str]:
     """Subset of ``names`` appearing as a whole word anywhere under ``tests/`` (untracked-aware, .py-only)."""
     found: set[str] = set()
-    paths = {p for root in diffscope.project_paths("test_roots", [Path("tests")])
-             for p in (diffscope.REPO_ROOT / root).rglob("*.py")}
+    paths = {p for root in layout.project_paths("test_roots", [Path("tests")])
+             for p in (layout.REPO_ROOT / root).rglob("*.py")}
     for path in sorted(paths):
         for line in path.read_text(encoding="utf-8-sig").splitlines():
             found |= names.intersection(_IDENT.findall(line))
@@ -117,7 +117,7 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
     candidates = build_candidates()
 
     # Read the runtime corpus once; reuse the text for BOTH the resolver facts and the occurrence index.
-    corpus_text = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
+    corpus_text = {path: layout.read_text(path) for path in runtime_corpus_files()}
     facts = [collect_module_facts(text, path) for path, text in corpus_text.items()]
     reexport_map = build_reexport_map(facts)
     entry_points = entry_point_targets()
@@ -252,7 +252,7 @@ def _owner_module(sites: list[tuple[Path, str, int]], corpus_text: dict[Path, st
 
 def duplicate_constant_diagnostics(files: list[Path]) -> list[Diagnostic]:
     """One warning per ``files`` site of a long string constant assigned in 2+ runtime modules."""
-    corpus_text = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
+    corpus_text = {path: layout.read_text(path) for path in runtime_corpus_files()}
     by_value: dict[str, list[tuple[Path, str, int]]] = defaultdict(list)
     for path, text in corpus_text.items():
         for name, value, line in _string_constants(text):

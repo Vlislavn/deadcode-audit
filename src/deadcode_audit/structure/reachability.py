@@ -34,7 +34,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import diffscope, layout
 from deadcode_audit.framework import safe_parse
 
 # Advisory confidence classes, ordered most- to least-likely-actually-dead (the Vulture-confidence /
@@ -98,7 +98,7 @@ def public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
     from blocking to advisory later; it never grants a silent pass.
     """
     # utf-8-sig: tolerate UTF-8-BOM files (U+FEFF) in target corpora, which crash ast.parse.
-    source = (diffscope.REPO_ROOT / path).read_text(encoding="utf-8-sig")
+    source = (layout.REPO_ROOT / path).read_text(encoding="utf-8-sig")
     tree = safe_parse(source)
     if tree is None:
         # An unparseable file must not crash the gate with a traceback. Warn and continue: the
@@ -124,12 +124,12 @@ def public_symbol_definitions(path: Path) -> list[PublicSymbolDefinition]:
 
 def _runtime_reference_locations(symbol: str) -> list[tuple[Path, int]]:
     """Return runtime source locations where the symbol's name appears (word-boundary grep)."""
-    lines = diffscope.git_lines("grep", "-n", "-w", "-e", symbol, "--", *(p.as_posix() for p in diffscope.source_roots()))
+    lines = diffscope.git_lines("grep", "-n", "-w", "-e", symbol, "--", *(p.as_posix() for p in layout.source_roots()))
     locations: list[tuple[Path, int]] = []
     for entry in lines:
         path_text, line_text, _ = entry.split(":", 2)
         path = Path(path_text)
-        if not diffscope.is_runtime_python_path(path):
+        if not layout.is_runtime_python_path(path):
             continue
         locations.append((path, int(line_text)))
     return locations
@@ -144,8 +144,8 @@ def _has_test_reference(symbol: str) -> bool:
     surfaced as advisory instead.
     """
     completed = subprocess.run(
-        ["git", "grep", "-l", "-w", "-e", symbol, "--", *(p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")]))],
-        cwd=diffscope.REPO_ROOT,
+        ["git", "grep", "-l", "-w", "-e", symbol, "--", *(p.as_posix() for p in layout.project_paths("test_roots", [Path("tests")]))],
+        cwd=layout.REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -191,9 +191,9 @@ def module_dotted_name(path: Path) -> str | None:
     ``scripts`` is its own package (``scripts/deadcode/diffscope.py`` -> ``deadcode_audit.diffscope``).
     ``__init__.py`` maps to its package. Returns None for non-runtime paths.
     """
-    roots = diffscope.project_paths("import_roots", [Path("src"), Path(".")])
+    roots = layout.project_paths("import_roots", [Path("src"), Path(".")])
     matching = [root for root in roots if path.is_relative_to(root)]
-    if not matching or not diffscope.is_runtime_python_path(path):
+    if not matching or not layout.is_runtime_python_path(path):
         return None
     root = max(matching, key=lambda p: len(p.parts))
     rel = path.relative_to(root).as_posix()
@@ -440,7 +440,7 @@ def entry_point_targets() -> set[tuple[str, str]]:
     Reads ``[project.scripts]``, ``[project.gui-scripts]`` and every ``[project.entry-points.<group>]``
     (``"pkg.mod:func"`` / ``"pkg.mod:Cls.method"`` -> ``("pkg.mod", "func"|"Cls")``).
     """
-    pyproject = diffscope.REPO_ROOT / "pyproject.toml"
+    pyproject = layout.REPO_ROOT / "pyproject.toml"
     if not pyproject.is_file():
         return set()
     project = tomllib.loads(pyproject.read_text(encoding="utf-8-sig")).get("project", {})
@@ -462,8 +462,8 @@ def vulture_whitelist_names() -> set[str]:
     here — the Vulture gate is the one that fails on them.
     """
     names: set[str] = set()
-    for relative in diffscope.project_paths("vulture_whitelist", []):
-        path = diffscope.REPO_ROOT / relative
+    for relative in layout.project_paths("vulture_whitelist", []):
+        path = layout.REPO_ROOT / relative
         if not path.is_file():
             continue
         tree = safe_parse(path.read_text(encoding="utf-8-sig"))
@@ -479,7 +479,7 @@ def vulture_whitelist_names() -> set[str]:
 
 def runtime_corpus_files() -> list[Path]:
     """Every runtime ``src`` + ``scripts`` Python file, repo-relative (the resolver corpus)."""
-    return diffscope.runtime_files()
+    return layout.runtime_files()
 
 
 def classify_unresolved(
@@ -515,7 +515,7 @@ def classify_unresolved(
 
 def runtime_consumer_check(paths: list[Path]) -> int:
     """Block on changed public symbols with no consumer; advise on collision/dynamic/decorated suspects."""
-    changed_runtime_paths = [path for path in paths if diffscope.is_runtime_python_path(path)]
+    changed_runtime_paths = [path for path in paths if layout.is_runtime_python_path(path)]
     if not changed_runtime_paths:
         print("No changed src runtime files for consumer check")
         return 0
@@ -535,7 +535,7 @@ def runtime_consumer_check(paths: list[Path]) -> int:
     }
 
     # Resolver refinement: does each symbol's name resolve to a real reference?
-    facts = [collect_module_facts(diffscope.read_text(p), p) for p in runtime_corpus_files()]
+    facts = [collect_module_facts(layout.read_text(p), p) for p in runtime_corpus_files()]
     reexport_map = build_reexport_map(facts)
     entry_points = entry_point_targets()
 

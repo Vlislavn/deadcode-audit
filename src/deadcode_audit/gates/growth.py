@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import diffscope, layout
 from deadcode_audit.js import javascript
 
 METRICS = ("lines", "functions", "classes", "short_functions", "imports")
@@ -90,7 +90,7 @@ def compare(base: str, head: str = "HEAD", paths: list[str] | None = None) -> di
     base = diffscope.git_output("rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}").strip()
     head = diffscope.git_output("rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}").strip()
     changed = list(filter(None, diffscope.git_output("diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", base, head).split("\0")))
-    selected = [p for p in changed if p.endswith(".py") and not diffscope.is_test_path(Path(p)) and (paths is None or p in paths)]
+    selected = [p for p in changed if p.endswith(".py") and not layout.is_test_path(Path(p)) and (paths is None or p in paths)]
     before, base_files = _snapshot(base, selected)
     after, head_files = _snapshot(head, selected)
     return {
@@ -106,7 +106,7 @@ def compare(base: str, head: str = "HEAD", paths: list[str] | None = None) -> di
 def _function_lines(path: str, row: int) -> int | None:
     """Physical length of the function defined at ``row`` of a working-tree file; None if unreadable."""
     try:
-        tree = ast.parse((diffscope.REPO_ROOT / path).read_text())
+        tree = ast.parse((layout.REPO_ROOT / path).read_text())
     except (SyntaxError, ValueError, OSError):
         return None
     return next((n.end_lineno - n.lineno + 1 for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.lineno == row), None)
@@ -114,7 +114,7 @@ def _function_lines(path: str, row: int) -> int | None:
 
 def _worst_functions(paths: list[str]) -> dict[str, tuple[str, int, int | None]]:
     """Per-file most complex function ``(name, McCabe, lines)`` from ruff's C901 (threshold 1 reports every branching function)."""
-    root = diffscope.REPO_ROOT
+    root = layout.REPO_ROOT
     done = subprocess.run(
         ["ruff", "check", "--isolated", "--select", "C901", "--config", "lint.mccabe.max-complexity = 1", "--output-format", "json", *paths],
         cwd=root, capture_output=True, text=True, check=False,
@@ -141,7 +141,7 @@ def _oxlint() -> str | None:
 
 def _worst_js_functions(paths: list[str], executable: str) -> dict[str, tuple[str, int, int | None]]:
     """Per-file most complex function ``(name, complexity, lines)`` from Oxlint's ``complexity`` rule at max 1."""
-    root = diffscope.REPO_ROOT.resolve()
+    root = layout.REPO_ROOT.resolve()
     best: dict[str, tuple[int, int, int, str, int]] = {}  # path -> (complexity, -line, -column, name, lines); the earliest of equals wins
     sources: dict[str, bytes] = {}
     with tempfile.TemporaryDirectory(prefix="deadcode-growth-") as temporary:
@@ -169,7 +169,7 @@ def _worst_js_functions(paths: list[str], executable: str) -> dict[str, tuple[st
 def _is_hotspot_file(path: str) -> bool:
     """Non-test .py/.js/.jsx; JS tests are ``javascript.is_js_test_file``."""
     file = Path(path)
-    if diffscope.is_test_path(file):
+    if layout.is_test_path(file):
         return False
     return file.suffix == ".py" or (file.suffix in HOTSPOT_JS_SUFFIXES and not javascript.is_js_test_file(file))
 

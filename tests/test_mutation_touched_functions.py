@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from mutmut.mutation.file_mutation import mutate_file_contents
 
-from deadcode_audit import cli, diffscope
+from deadcode_audit import cli, layout
 from deadcode_audit.gates import mutation
 
 THREE = (
@@ -30,7 +30,7 @@ def repo(tmp_path, monkeypatch):
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-m", "base")
     git(tmp_path, "checkout", "-b", "change")
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     return tmp_path
 
 

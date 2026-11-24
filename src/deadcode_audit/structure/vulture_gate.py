@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import config, diffscope
+from deadcode_audit import config, diffscope, layout
 
 _VULTURE_LINE_RE = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?P<message>.+) \((?P<confidence>\d+)% confidence\)$")
 
@@ -71,13 +71,13 @@ def split_blocking_advisory(
 
 def _run_vulture(min_confidence: int) -> str:
     """Run Vulture across the source tree and return its stdout (raising on a tool error)."""
-    roots = diffscope.source_roots()
-    whitelist = diffscope.project_paths("vulture_whitelist", [])
+    roots = layout.source_roots()
+    whitelist = layout.project_paths("vulture_whitelist", [])
     if not roots:
         # Fail closed: with zero roots the gate would scan nothing and silently pass.
         raise ValueError("No source roots configured for Vulture — refusing to run a no-op gate")
     for path in [*roots, *whitelist]:
-        if not (diffscope.REPO_ROOT / path).exists():
+        if not (layout.REPO_ROOT / path).exists():
             raise ValueError(f"Configured Vulture path does not exist: {path}")
     completed = subprocess.run(
         [
@@ -94,7 +94,7 @@ def _run_vulture(min_confidence: int) -> str:
             "--ignore-decorators",
             config.vulture_ignore_decorators_arg(),
         ],
-        cwd=diffscope.REPO_ROOT,
+        cwd=layout.REPO_ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",  # decode as UTF-8 regardless of locale, like every other git/tool call

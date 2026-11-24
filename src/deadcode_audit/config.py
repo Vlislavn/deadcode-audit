@@ -78,9 +78,9 @@ EXTRA_MUTATION_TARGETS: frozenset[Path] = frozenset({Path("scripts/evals/monorep
 
 def is_mutation_target(path: Path) -> bool:
     """True for changed files the mutation gate should mutate (runtime code only)."""
-    from deadcode_audit import diffscope
-    roots = diffscope.project_paths("mutation_roots", diffscope.source_roots())
-    return any(path == root or path.is_relative_to(root) for root in roots) and not diffscope.is_test_path(path)
+    from deadcode_audit import layout
+    roots = layout.project_paths("mutation_roots", layout.source_roots())
+    return any(path == root or path.is_relative_to(root) for root in roots) and not layout.is_test_path(path)
 
 
 

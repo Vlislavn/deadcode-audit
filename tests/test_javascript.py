@@ -168,7 +168,7 @@ def test_backend_ignores_project_js_config_and_never_follows_its_plugins(
 def test_changed_scope_keeps_python_only_api_and_scans_new_committed_js(
     tmp_path, real_backend, monkeypatch
 ):
-    from deadcode_audit import diffscope
+    from deadcode_audit import diffscope, layout
 
     def git(*arguments):
         subprocess.run(
@@ -201,7 +201,7 @@ def test_changed_scope_keeps_python_only_api_and_scans_new_committed_js(
         "-m",
         "change",
     )
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     assert diffscope.changed_python_files("main") == [Path("src/added.py")]
     result = run_cli(
         tmp_path,
@@ -221,10 +221,10 @@ def test_changed_scope_keeps_python_only_api_and_scans_new_committed_js(
 
 
 def test_python_only_scan_result_and_json_remain_unchanged(tmp_path, monkeypatch):
-    from deadcode_audit import config, diffscope, output, scan
+    from deadcode_audit import config, layout, output, scan
     from deadcode_audit.detectors import ALL_DETECTORS
 
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     (tmp_path / "entry.py").write_text("answer = 42\n")
     cfg = config.DeadcodeConfig()
     before = scan.run_scan([Path("entry.py")], ALL_DETECTORS, cfg)
@@ -277,10 +277,10 @@ def backend_row():
     ],
 )
 def test_invalid_backend_protocol_is_never_clean(tmp_path, monkeypatch, fault):
-    from deadcode_audit import diffscope
+    from deadcode_audit import layout
     from deadcode_audit.js import javascript
 
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     row = backend_row()
     report = backend_report(rows=[row])
     code = 0
@@ -332,10 +332,10 @@ def test_invalid_backend_protocol_is_never_clean(tmp_path, monkeypatch, fault):
 def test_backend_transport_failures_do_not_return_findings(
     tmp_path, monkeypatch, fault
 ):
-    from deadcode_audit import diffscope
+    from deadcode_audit import layout
     from deadcode_audit.js import javascript
 
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
 
     def process(*args, **kwargs):
         if fault == "timeout":
@@ -370,10 +370,10 @@ def test_unsupported_backend_version_is_refused(tmp_path, monkeypatch):
 def test_source_drift_and_failed_later_batch_do_not_publish_a_partial_scan(
     tmp_path, monkeypatch
 ):
-    from deadcode_audit import diffscope
+    from deadcode_audit import layout
     from deadcode_audit.js import javascript
 
-    monkeypatch.setattr(diffscope, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(javascript, "BATCH_FILES", 1)
     monkeypatch.setattr(javascript, "_executable", lambda: "fixture")
     for name in ["a.js", "b.js"]:
