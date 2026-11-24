@@ -12,15 +12,15 @@ DEADCODE_REPO_ROOT=examples/architecture-fixture uv run --no-sync deadcode scan 
 uv run --no-sync deadcode scan examples/architecture-fixture --json     # same files, root config absent
 ```
 
-Layout (`.deadcode.yml`: `source_roots`/`import_roots` = `cyc shal shalmod app widedirs`, `test_roots` = `tests`).
+Layout (`.deadcode.yml`: `source_roots`/`import_roots` = `cyc shal shalmod app widedirs shalid shalcls`, `test_roots` = `tests`).
 Dotted module names are relative to those roots (`cyc/cheap/m_a.py` is `cheap.m_a`). Paths below are
 relative to the fixture root. Group dirs `cyc/ shal/ shalmod/ app/ widedirs/` are not packages (no `__init__.py`); each
-has fewer than 15 members (cyc 9, shal 13, shalmod 2, app 14, widedirs 4), so none of them may be reported as wide.
+has fewer than 15 members (cyc 9, shal 13, shalmod 2, app 14, widedirs 4, shalid 11, shalcls 6), so none of them may be reported as wide.
 
 `.deadcode.yml` `allowed_cycles`: `shrink.a <-> shrink.b <-> shrink.c`, `grow.a <-> grow.b`.
 
 Anything not listed as FIRE below must produce **no** `architecture/*` finding or cycle (that includes every
-`app/use_*.py` consumer, every `widedirs/*/mod_*.py` file and all of `tests/`).
+`app/use_*.py` consumer, every `shalid/use_*.py` / `shalcls/use_*.py` consumer, every `widedirs/*/mod_*.py` file and all of `tests/`).
 
 ## 1. Cycles (`deadcode cycles --json`)
 
@@ -47,8 +47,8 @@ Total expected after the work lands: 7 file cycles listed in the table (a, b-cov
 Semantics (updated): only FUNCTIONS are working items. Classes are not counted (neither in `shown` nor in
 `total`); methods of top-level classes count toward `total` only (dunders, property/setters, thin wrappers and
 methods of classes with an external base excluded). A class only matters as the head of a list: shown free
-functions that reference an in-unit class are grouped under it. `shown` = free functions referenced by runtime
-code outside the unit; `hidden = total - shown`. FIRE iff `shown > 7` AND (`lists > 7` OR some list `> 7`) AND
+functions that reference an in-unit class are grouped under it. `shown` = free functions USED by runtime
+code outside the unit (the consumer must load a name that resolves, through re-exports, to that very definition: an unused import, an `__all__` entry, a homonym elsewhere or a test never counts; a package `__init__` counts only if it uses the name); `hidden = total - shown`. FIRE iff `shown > 7` AND (`lists > 7` OR some list `> 7`) AND
 `hidden <= shown`. Tests never count.
 
 Units: a package dir (reported at `__init__.py:1`) or a file module (`file:1`). **A package unit is skipped when
@@ -74,6 +74,11 @@ at either path. Consumers are `app/use_<case>.py` (case t: `tests/test_shaltest.
 | (t) tests only (extra) | shallow-module | `shal/shaltest/core.py:1` | NO-FIRE | 0 / 0 / 15. Same shape as (h) but the only importer is `tests/test_shaltest.py`; tests never count. |
 | (u) excluded kinds (extra) | shallow-module | `shal/excluded/core.py:1` | FIRE | 8 / 8 / 4. Hidden = 2 private functions + `Plain.bump`/`Plain.drop`. Excluded (not counted): 4 dunders + 4 property/setter defs in `Plain`, 8 methods of `Worker(threading.Thread)` (external base). If they were counted, hidden would be 20 > 8 and it would not fire. |
 | (w) data declaration (extra) | shallow-module | `shalmod/records.py:1` | NO-FIRE | 0 / 0 / 0. 17 classes (9 dataclasses, 4 NamedTuple, 4 TypedDict), all imported by `app/use_records.py`, no functions, no methods. Classes are not working items. If classes counted it would be 17 / 17 / 0 = FIRE. |
+| (x1) homonym via re-export | shallow-module | `shalid/hom_a.py:1` FIRE; `shalid/hom_b.py:1` NO-FIRE | FIRE (hom_a only) | `hom_a` and `hom_b` both define `f1..f8`; package `hom_p` re-exports `hom_a`'s; `use_hom.py` imports them from `hom_p` and calls them. 8 / 8 / 0 for `hom_a`. `hom_b` is never used, so the same spelling must not credit it. |
+| (x2) unused import | shallow-module | `shalid/unu.py:1` | NO-FIRE | `use_unu.py` does `from unu import h1..h8` and never loads them: an import is not a use. |
+| (x3) real calls from another package's `__init__` | shallow-module | `shalid/rin.py:1` | FIRE | `rpk/__init__.py` imports `s1..s8` and calls all of them (it has its own function, so it is no facade). 8 / 8 / 0. A package `__init__` is a consumer iff it uses the name. |
+| (x4) module alias | shallow-module | `shalid/ali.py:1` | FIRE | `use_ali.py` does `import ali as x` and calls `x.a1()..x.a8()`. 8 / 8 / 0. |
+| (x5) test-only consumer | shallow-module | `shalid/tonly.py:1` | NO-FIRE | `e1..e8` are used only by `tests/test_ident.py`; tests never count. |
 
 ## 3. architecture/wide-directory (`deadcode scan`, warning)
 

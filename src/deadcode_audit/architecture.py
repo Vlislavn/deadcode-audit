@@ -10,8 +10,9 @@ and plain file modules (reported at the file). Within a unit:
 * **working items** — top-level functions and the methods of top-level classes (classes themselves are
   never items; they only head lists). Excluded: dunders, ``@property``/setters, ``@overload``, ``@abstractmethod``,
   thin wrappers (:mod:`deadcode_audit.detectors.thin_wrapper`), and methods of classes with an external base.
-* **shown** — public free functions referenced by runtime code OUTSIDE the unit (tests
-  and package ``__init__`` facades never count). v1: methods count toward the total only, so the rule
+* **shown** — public free functions USED by runtime code OUTSIDE the unit: the consumer must load a name that
+  resolves, through re-exports, to this very definition (an unused import, an ``__all__`` entry, a same-named
+  function elsewhere, or tests never count; a package ``__init__`` counts only when it uses the name). v1: methods count toward the total only, so the rule
   is false-negative-biased.
 * **lists** — shown functions grouped by the in-unit class they mention; a function mentioning none forms a list of its own. A package whose items equal those of one
   of its file modules (facade + sole module) is skipped: the module is reported instead.
@@ -33,9 +34,8 @@ from deadcode_audit.diagnostic import ENGINE_CODE_QUALITY, Diagnostic, RuleSpec,
 from deadcode_audit.framework import FileContext, safe_parse
 from deadcode_audit.reachability import (
     ModuleFacts,
-    build_reexport_map,
+    build_reference_index,
     collect_module_facts,
-    referencing_modules,
     runtime_corpus_files,
 )
 
@@ -191,17 +191,12 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
     facts = [collect_module_facts(text, path) for path, text in sources.items()]
     known = {fact.dotted for fact in facts}
     modules = [m for path, text in sources.items() if (m := _read_module(path, text, known)) and m.dotted]
-    reexport_map = build_reexport_map(facts)
-    facades = {fact.dotted for fact in facts if fact.is_package}  # an __init__ re-export is not a consumer
-    cache: dict[tuple[str, str], set[str]] = {}
+    index = build_reference_index(facts)
 
     def referenced_outside(module: _Module, item: _Item, unit: str) -> bool:
         if item.kind == "method" or item.name.startswith("_"):
             return False
-        key = (module.dotted, item.name)
-        if key not in cache:
-            cache[key] = referencing_modules(item.name, module.dotted, facts, reexport_map) - facades
-        return any(not _inside(dotted, unit) for dotted in cache[key])
+        return any(not _inside(dotted, unit) for dotted in index.get((module.dotted, item.name), ()))
 
     report_path = {m.dotted: m.path for m in modules}
     scanned = set(files)

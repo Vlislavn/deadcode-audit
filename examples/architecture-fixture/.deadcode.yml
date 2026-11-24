@@ -2,8 +2,8 @@
 # Run against it with: DEADCODE_REPO_ROOT=examples/architecture-fixture deadcode <command>
 # Expectations: EXPECTED.md. Do NOT "fix" the fixture: every smell here is deliberate.
 project:
-  source_roots: [cyc, shal, shalmod, app, widedirs]
-  import_roots: [cyc, shal, shalmod, app, widedirs]
+  source_roots: [cyc, shal, shalmod, app, widedirs, shalid, shalcls]
+  import_roots: [cyc, shal, shalmod, app, widedirs, shalid, shalcls]
   test_roots: [tests]
 
 allowed_cycles:
