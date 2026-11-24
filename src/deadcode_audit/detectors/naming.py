@@ -33,7 +33,13 @@ import ast
 import re
 from typing import TYPE_CHECKING
 
-from deadcode_audit.diagnostic import ENGINE_AI_SLOP, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
+from deadcode_audit.diagnostic import (
+    ENGINE_AI_SLOP,
+    Diagnostic,
+    RuleSpec,
+    Severity,
+    diagnostic_from_spec,
+)
 
 if TYPE_CHECKING:
     from deadcode_audit.framework import FileContext

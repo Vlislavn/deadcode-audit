@@ -39,7 +39,7 @@ from deadcode_audit.diagnostic import (
 )
 from deadcode_audit.framework import FileContext, safe_parse
 from deadcode_audit.js import javascript
-from deadcode_audit.structure.reachability import (
+from deadcode_audit.structure.resolver import (
     ModuleFacts,
     build_reference_index,
     capped,

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit.structure.reachability import (
+from deadcode_audit.structure.resolver import (
     build_reexport_map,
     collect_module_facts,
     module_dotted_name,

@@ -38,12 +38,14 @@ from deadcode_audit.structure.reachability import (
     ADVISORY_RANK,
     ADVISORY_TEST_ONLY,
     PublicSymbolDefinition,
-    build_reexport_map,
     classify_unresolved,
+    public_symbol_definitions,
+)
+from deadcode_audit.structure.resolver import (
+    build_reexport_map,
     collect_module_facts,
     entry_point_targets,
     module_dotted_name,
-    public_symbol_definitions,
     resolved_reference_exists,
     runtime_corpus_files,
     vulture_whitelist_names,

@@ -6,7 +6,7 @@ exactly the rot a weak coding agent introduces to "make the import work". This m
 mathematically exact check: a strongly-connected component (SCC) of size > 1 in the module import graph *is*
 a cycle, so there are no heuristics and near-zero false positives.
 
-It reuses the Tier-4 resolver primitives (:func:`deadcode_audit.structure.reachability.collect_module_facts` and
+It reuses the Tier-4 resolver primitives (:func:`deadcode_audit.structure.resolver.collect_module_facts` and
 ``module_dotted_name``) to build the graph from real import edges — direct, aliased, relative, ``import a.b``,
 and ``from a import b`` (resolved to the submodule when ``a.b`` is itself an internal module). The algorithm
 follows the iterative-context Tarjan SCC reference in ``scripts/agents/_sig_builder_core.py`` (modelled, not
@@ -31,11 +31,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from deadcode_audit import config, layout
 from deadcode_audit.framework import safe_parse
-from deadcode_audit.structure.reachability import (
-    _resolve_relative,
-    capped,
-    module_dotted_name,
-)
+from deadcode_audit.structure.resolver import _resolve_relative, capped, module_dotted_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

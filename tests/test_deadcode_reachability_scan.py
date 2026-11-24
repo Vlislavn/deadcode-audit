@@ -192,7 +192,7 @@ def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_br
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from deadcode_audit import layout
-    from deadcode_audit.structure import reachability
+    from deadcode_audit.structure import resolver
 
     (tmp_path / "ok.py").write_text("alpha\n_.beta\n# gamma\n", encoding="utf-8")
     (tmp_path / "broken.py").write_text("def (:\n", encoding="utf-8")
@@ -200,8 +200,8 @@ def test_vulture_whitelist_names_reads_names_and_attributes_skips_missing_and_br
         "project:\n  vulture_whitelist: [ok.py, broken.py, missing.py]\n", encoding="utf-8"
     )
     monkeypatch.setattr(layout, "REPO_ROOT", tmp_path)
-    assert reachability.vulture_whitelist_names() >= {"alpha", "beta"}
-    assert "gamma" not in reachability.vulture_whitelist_names()
+    assert resolver.vulture_whitelist_names() >= {"alpha", "beta"}
+    assert "gamma" not in resolver.vulture_whitelist_names()
 
 
 # --- reachability/duplicate-constant: one business string defined in 2+ runtime modules ---
