@@ -6,7 +6,11 @@ Two structural anti-patterns that weak coding agents leave behind around ``try/e
   a sole ``pass``, a sole bare ``...``, a sole ``continue``/``break`` (error dropped, control
   flow just moves on), or a sole *log-and-continue* (``logger.*`` / ``logging.*`` / ``log.*`` /
   ``print`` / ``warnings.warn``). This is exactly the failure mode the source monorepo's own fail-fast rule
-  (SOURCE-D001) forbids: an error is silently dropped, so a later step runs on a broken state.
+  (SOURCE-D001) forbids: an error is silently dropped, so a later step runs on a broken state. A sole
+  ``pass``/``...``/``continue``/``break`` in a handler that names a SPECIFIC expected condition
+  (``except json.JSONDecodeError: continue``, ``except psutil.NoSuchProcess: pass``) is the EAFP idiom — the
+  caught error IS the control flow — and is not flagged (measured: 25 of 26 findings on a 536-file real repo
+  were such handlers); bare/``Exception``/``BaseException`` handlers and log-and-continue stay flagged.
 
 * **redundant-try-catch** (WARNING) — a handler whose entire body is a bare ``raise`` (re-raise
   that adds nothing): the ``try/except`` is pure ceremony and can be deleted. Not flagged when a
@@ -44,9 +48,10 @@ SWALLOWED = RuleSpec(
     default_severity=Severity.ERROR,
     category="Error handling",
     help=(
-        "This except handler swallows the error (bare 'pass' or log-and-continue): execution "
-        "falls through on a broken state. Either handle it concretely (recover, set a fallback "
-        "value, return) or re-raise — do not silently drop it (SOURCE-D001 fail-fast)."
+        "This except handler swallows the error (bare 'pass' on a broad except, or log-and-continue): "
+        "execution falls through on a broken state. Catch the specific expected exception, or handle it "
+        "concretely (recover, set a fallback value, return) or re-raise — do not silently drop it "
+        "(SOURCE-D001 fail-fast)."
     ),
 )
 
@@ -73,6 +78,7 @@ _LOG_BARE_CALLS = frozenset({"print"})
 _LOG_ROOT_NAMES = frozenset({"logger", "logging", "log"})
 # Fully-qualified call shapes that are still pure logging even though they are not a *-root chain.
 _LOG_DOTTED_CALLS = frozenset({("warnings", "warn")})
+_BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
 
 
 def _attribute_root_name(node: ast.expr) -> str | None:
@@ -165,6 +171,15 @@ def _swallow_shape(statement: ast.stmt) -> str:
     return "..."
 
 
+def _catches_broad(handler: ast.ExceptHandler) -> bool:
+    """True for a bare ``except`` or one naming ``Exception``/``BaseException`` (alone or in a tuple)."""
+    if handler.type is None:
+        return True
+    elements = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    names = (e.id if isinstance(e, ast.Name) else e.attr if isinstance(e, ast.Attribute) else None for e in elements)
+    return any(name in _BROAD_EXCEPTIONS for name in names)
+
+
 def _is_bare_reraise_body(body: list[ast.stmt]) -> bool:
     """True iff the handler body is EXACTLY a single bare ``raise`` (no exception, no ``from``).
 
@@ -241,6 +256,8 @@ def detect(ctx: FileContext) -> list[Diagnostic]:
             continue
         if _is_swallow_body(body):
             shape = _swallow_shape(body[0])
+            if shape != "log-and-continue" and not _catches_broad(node):
+                continue  # a specific expected condition handled as control flow (EAFP), not a dropped error
             diagnostics.append(
                 diagnostic_from_spec(
                     SWALLOWED,
