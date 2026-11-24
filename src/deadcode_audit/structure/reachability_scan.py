@@ -184,7 +184,7 @@ def dead_symbol_diagnostics(files: list[Path]) -> list[Diagnostic]:
 
 
 def _string_constants(source: str) -> list[tuple[str, str, int]]:
-    """``(name, value, line)`` of module-level ``NAME = "<str>"`` constants worth comparing across modules."""
+    """``(name, value, line)`` of module- or class-level ``NAME = "<str>"`` constants worth comparing across modules."""
     tree = safe_parse(source)
     if tree is None:
         return []
@@ -197,7 +197,10 @@ def _string_constants(source: str) -> list[tuple[str, str, int]]:
         if isinstance(elt, ast.Constant)
     }
     found: list[tuple[str, str, int]] = []
-    for node in tree.body:
+    # Module level plus the bodies of top-level classes: ``class W: _ALPHABET = "..."`` is the same business
+    # constant, just bound on a class.
+    scopes = [tree.body, *(n.body for n in tree.body if isinstance(n, ast.ClassDef))]
+    for node in (stmt for body in scopes for stmt in body):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
         value = getattr(node, "value", None)
         if len(targets) != 1 or not isinstance(targets[0], ast.Name) or not isinstance(value, ast.Constant):

@@ -32,8 +32,10 @@ def _lines(source: str) -> list[int]:
 
 
 def test_swallow_bare_pass_fires() -> None:
-    src = "def load():\n    try:\n        risky()\n    except ValueError:\n        pass\n"
+    src = "def load():\n    try:\n        risky()\n    except Exception:\n        pass\n"
     assert _rule_ids(src) == [SWALLOWED]
+    # A specific expected condition handled as control flow (EAFP) is not a dropped error.
+    assert _rule_ids(src.replace("Exception", "ValueError")) == []
 
 
 def test_swallow_logger_then_continue_fires() -> None:
@@ -250,7 +252,7 @@ def test_multiple_handlers_each_flagged_at_their_own_line() -> None:
         "def pipeline():\n"
         "    try:\n"
         "        a()\n"
-        "    except KeyError:\n"  # line 4
+        "    except Exception:\n"  # line 4
         "        pass\n"
         "    try:\n"
         "        b()\n"
