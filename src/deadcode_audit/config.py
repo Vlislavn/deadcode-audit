@@ -113,8 +113,8 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
-    _require(isinstance(raw, dict), "top level must be a mapping")
-    assert isinstance(raw, dict)
+    if not isinstance(raw, dict):
+        raise ValueError("invalid .deadcode.yml: top level must be a mapping")
     unknown = set(raw) - _VALID_TOP_KEYS
     _require(not unknown, f"unknown top-level keys {sorted(unknown)}")
 

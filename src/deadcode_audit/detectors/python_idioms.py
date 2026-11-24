@@ -115,9 +115,8 @@ def _detect_range_len(tree: ast.Module, path_posix: str) -> list[Diagnostic]:
         if not isinstance(node, (ast.For, ast.AsyncFor)):
             continue
         it = node.iter
-        if not _is_bare_name_call(it, "range"):
+        if not (isinstance(it, ast.Call) and _is_bare_name_call(it, "range")):
             continue
-        assert isinstance(it, ast.Call)  # _is_bare_name_call guarantees a Call node
         # range(...) must take exactly one positional arg (no start/step) and no keywords.
         if len(it.args) != 1 or it.keywords:
             continue
@@ -172,13 +171,12 @@ def _detect_chained_get(tree: ast.Module, path_posix: str) -> list[Diagnostic]:
     findings: list[Diagnostic] = []
     reported_chain: set[int] = set()  # ids of inner get-calls already covered by an emitted finding
     for node in ast.walk(tree):  # BFS: outer calls are visited before the calls nested in them
-        if not isinstance(node, ast.Call):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         outer_is_get, _ = _get_call_default(node)
         if not outer_is_get:
             continue
-        # _get_call_default guaranteed node.func is an Attribute named "get"; its value is the receiver.
-        assert isinstance(node.func, ast.Attribute)
+        # node.func is an Attribute named "get"; its value is the receiver.
         receiver = node.func.value
         if not isinstance(receiver, ast.Call):
             continue
@@ -288,9 +286,8 @@ def _isinstance_subject_key(test: ast.expr) -> str | None:
     run). The subject is keyed by structure so the *same* ``x`` matches across branches and a
     *different* ``x`` does not.
     """
-    if not _is_bare_name_call(test, "isinstance"):
+    if not (isinstance(test, ast.Call) and _is_bare_name_call(test, "isinstance")):
         return None
-    assert isinstance(test, ast.Call)  # _is_bare_name_call guarantees a Call node
     if len(test.args) != 2 or test.keywords:
         return None
     return ast.dump(test.args[0])

@@ -143,7 +143,8 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
             has_test_ref=definition.symbol in test_reference_names,
             orphaned_blocks=False,  # whole-tree scan never blocks; orphaned -> top advisory instead
         )
-        assert reason is not None  # orphaned_blocks=False => every verdict is advisory
+        if reason is None:  # orphaned_blocks=False => every verdict is advisory
+            raise RuntimeError("advisory verdict without a reason")
         rows.append((definition, reason))
 
     rows.sort(
