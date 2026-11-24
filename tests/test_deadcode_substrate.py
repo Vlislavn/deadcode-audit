@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from deadcode_audit import _mask, config, framework, output
+from deadcode_audit import config, framework, output
 from deadcode_audit.gates import history
 from fixtures.deadcode_cli import run_deadcode_cli
 from deadcode_audit.diagnostic import ENGINE_AI_SLOP, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
@@ -52,7 +52,7 @@ def test_score_labels() -> None:
 
 def test_mask_preserves_offsets_and_blanks_content() -> None:
     src = 'url = "http://evil.example"  # TODO leak\nok = 1\n'
-    masked = _mask.mask_strings_and_comments(src)
+    masked = framework.mask_strings_and_comments(src)
     assert len(masked) == len(src)
     assert masked.count("\n") == src.count("\n")
     assert "TODO" not in masked and "evil" not in masked
