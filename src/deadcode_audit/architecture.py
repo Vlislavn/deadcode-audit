@@ -30,11 +30,18 @@ from pathlib import Path
 
 from deadcode_audit import diffscope, javascript
 from deadcode_audit.detectors import thin_wrapper
-from deadcode_audit.diagnostic import ENGINE_CODE_QUALITY, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
+from deadcode_audit.diagnostic import (
+    ENGINE_CODE_QUALITY,
+    Diagnostic,
+    RuleSpec,
+    Severity,
+    diagnostic_from_spec,
+)
 from deadcode_audit.framework import FileContext, safe_parse
 from deadcode_audit.reachability import (
     ModuleFacts,
     build_reference_index,
+    capped,
     collect_module_facts,
     resolve_identity,
     runtime_corpus_files,
@@ -126,11 +133,7 @@ def _has_external_base(node: ast.ClassDef, local: set[str], fact: ModuleFacts, k
     return False
 
 
-def _read_module(path: Path, source: str, known: set[str]) -> _Module | None:
-    tree = safe_parse(source)
-    if tree is None:
-        return None
-    fact = collect_module_facts(source, path)
+def _read_module(path: Path, source: str, tree: ast.Module, fact: ModuleFacts, known: set[str]) -> _Module:
     ctx = FileContext(path=path, source=source, tree=tree, lines=tuple(source.splitlines()))
     thin_lines = {d.line for d in thin_wrapper.detect(ctx)}
     local = {n.name for n in tree.body if isinstance(n, (*_FUNCS, ast.ClassDef))}
@@ -171,11 +174,6 @@ def _inside(dotted: str, unit: str) -> bool:
     return dotted == unit or dotted.startswith(f"{unit}.")
 
 
-def _cap(names: list[str]) -> str:
-    more = len(names) - NOTES_LIMIT
-    return ", ".join(names[:NOTES_LIMIT]) + (f", +{more} more" if more > 0 else "")
-
-
 def _lists(
     shown: list[tuple[_Module, _Item]], members: list[_Module], by_dotted: dict[str, ModuleFacts]
 ) -> dict[tuple[str, str], list[str]]:
@@ -202,9 +200,15 @@ def _lists(
 def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
     """One advisory warning per shallow unit whose report location is among ``files`` (whole-tree judgement)."""
     sources = {path: diffscope.read_text(path) for path in runtime_corpus_files()}
-    facts = [collect_module_facts(text, path) for path, text in sources.items()]
+    trees = {path: safe_parse(text) for path, text in sources.items()}
+    by_path = {path: collect_module_facts(text, path, trees[path]) for path, text in sources.items()}
+    facts = list(by_path.values())
     known = {fact.dotted for fact in facts}
-    modules = [m for path, text in sources.items() if (m := _read_module(path, text, known)) and m.dotted]
+    modules = [
+        m
+        for path, text in sources.items()
+        if (tree := trees[path]) and (m := _read_module(path, text, tree, by_path[path], known)).dotted
+    ]
     index = build_reference_index(facts)
 
     def referenced_outside(module: _Module, item: _Item, unit: str) -> bool:
@@ -240,7 +244,7 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
                     f"{kind} '{unit}' exposes {len(shown)} of {total} working items to outside code "
                     f"({hidden} hidden) in {len(groups)} list(s), longest {len(longest)}"
                 ),
-                detail=f"shown: {_cap([item.name for _m, item in shown])}",
+                detail=f"shown: {capped([item.name for _m, item in shown], NOTES_LIMIT)}",
             )
         )
     return sorted(diagnostics, key=lambda d: (d.file_path, d.line))
@@ -285,7 +289,8 @@ def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
                 line=1,
                 message=f"directory '{directory.as_posix()}' has {len(names) + len(subdirs)} direct members "
                 f"({len(names)} files, {len(subdirs)} subdirectories; limit {MEMBERS_LIMIT})",
-                detail=f"files: {_cap(names)}" + (f"; dirs: {_cap(subdirs)}" if subdirs else ""),
+                detail=f"files: {capped(names, NOTES_LIMIT)}"
+                + (f"; dirs: {capped(subdirs, NOTES_LIMIT)}" if subdirs else ""),
             )
         )
     return diagnostics

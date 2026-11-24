@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from deadcode_audit import config, diffscope
 from deadcode_audit.framework import safe_parse
-from deadcode_audit.reachability import _resolve_relative, module_dotted_name
+from deadcode_audit.reachability import _resolve_relative, capped, module_dotted_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -44,7 +44,7 @@ HELD_IN_MIND = 7  # lists of ties / circle nodes longer than this are capped wit
 def _internal_nodes() -> dict[str, Path]:
     """Map every ``src/`` module's dotted name to its file (the import-graph node set)."""
     nodes: dict[str, Path] = {}
-    for path in diffscope.all_src_files():
+    for path in diffscope.runtime_files():
         dotted = module_dotted_name(path)
         if dotted is not None:
             nodes[dotted] = path
@@ -209,44 +209,40 @@ def tarjan_scc(graph: dict[str, set[str]]) -> list[list[str]]:
     lowlink: dict[str, int] = {}
     on_stack: dict[str, bool] = {}
     stack: list[str] = []
-    counter = 0
     sccs: list[list[str]] = []
+    work: list[tuple[str, list[str]]] = []  # (node, its unprocessed successors)
+
+    def visit(node: str) -> None:
+        index_of[node] = lowlink[node] = len(index_of)
+        stack.append(node)
+        on_stack[node] = True
+        work.append((node, sorted(graph.get(node, ()))))
+
+    def next_unvisited(node: str, successors: list[str]) -> str | None:
+        while successors:
+            succ = successors.pop(0)
+            if succ not in index_of:
+                return succ
+            if on_stack.get(succ, False):
+                lowlink[node] = min(lowlink[node], index_of[succ])
+        return None
 
     for root in graph:
         if root in index_of:
             continue
-        # work stack of (node, iterator over its successors)
-        work: list[tuple[str, list[str]]] = [(root, sorted(graph.get(root, ())))]
-        index_of[root] = lowlink[root] = counter
-        counter += 1
-        stack.append(root)
-        on_stack[root] = True
+        visit(root)
         while work:
             node, successors = work[-1]
-            advanced = False
-            while successors:
-                succ = successors.pop(0)
-                if succ not in index_of:
-                    index_of[succ] = lowlink[succ] = counter
-                    counter += 1
-                    stack.append(succ)
-                    on_stack[succ] = True
-                    work.append((succ, sorted(graph.get(succ, ()))))
-                    advanced = True
-                    break
-                if on_stack.get(succ, False):
-                    lowlink[node] = min(lowlink[node], index_of[succ])
-            if advanced:
+            succ = next_unvisited(node, successors)
+            if succ is not None:
+                visit(succ)
                 continue
             # all successors processed: this node is done
             if lowlink[node] == index_of[node]:
-                component: list[str] = []
-                while True:
-                    member = stack.pop()
-                    on_stack[member] = False
-                    component.append(member)
-                    if member == node:
-                        break
+                component = [stack.pop()]
+                while component[-1] != node:
+                    component.append(stack.pop())
+                on_stack.update(dict.fromkeys(component, False))
                 sccs.append(component)
             work.pop()
             if work:
@@ -364,12 +360,6 @@ def package_cycles(ties: list[Tie], file_cycles: list[list[str]]) -> list[Found]
     return [f for f in found if frozenset(f.cycle) not in known]
 
 
-def _capped(items: list[str]) -> str:
-    return ", ".join(items[:HELD_IN_MIND]) + (
-        f", +{len(items) - HELD_IN_MIND} more" if len(items) > HELD_IN_MIND else ""
-    )
-
-
 def _site(tie: Tie) -> str:
     return f"{tie.site[0]}:{tie.site[1]}"
 
@@ -408,14 +398,14 @@ def _print_cycle(f: Found, allowed: list[set[str]], *, advisory: bool) -> None:
     tag = "  [allowlisted]" if advisory and _covered(f.cycle, allowed) else ""
     label = "package cycle" if f.kind == "package" else "cycle"
     print(f"  {label}{tag}")
-    print(f"    members: {_capped(f.cycle)}")
+    print(f"    members: {capped(f.cycle, HELD_IN_MIND)}")
     if not f.ties:
         return
     cut = f.ties[0]
     print(f"    cheapest cut: {cut.src} -> {cut.dst} ({len(cut.names)} name{'s' * (len(cut.names) != 1)}) {_site(cut)}")
     if f.circle:
-        print(f"    circle: {_capped(f.circle).replace(', ', ' -> ')}")
-    print(f"    ties: {_capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties])}")
+        print(f"    circle: {capped(f.circle, HELD_IN_MIND).replace(', ', ' -> ')}")
+    print(f"    ties: {capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties], HELD_IN_MIND)}")
 
 
 def _incomplete(unparsed: int) -> str:

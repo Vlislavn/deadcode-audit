@@ -148,6 +148,7 @@ def _has_test_reference(symbol: str) -> bool:
         cwd=diffscope.REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     # git grep exit codes: 0 = matches found, 1 = no matches (a normal result, not an error),
     # anything else = a real git failure that must surface (fail-fast, not swallowed).
@@ -199,8 +200,7 @@ def module_dotted_name(path: Path) -> str | None:
     if not rel.endswith(".py"):
         return None
     rel = rel[: -len(".py")]
-    if rel.endswith("/__init__"):
-        rel = rel[: -len("/__init__")]
+    rel = rel.removesuffix("/__init__")
     return rel.replace("/", ".")
 
 
@@ -235,11 +235,16 @@ def _resolve_relative(dotted: str, is_package: bool, level: int, module: str | N
     return base_dotted or None
 
 
-def collect_module_facts(source: str, path: Path) -> ModuleFacts:
-    """Extract import edges + name/attribute uses + ``__all__`` + public defs from a module."""
+def capped(items: list[str], limit: int) -> str:
+    """Join ``items``, listing the first ``limit`` and ending with ``+N more``."""
+    return ", ".join(items[:limit]) + (f", +{len(items) - limit} more" if len(items) > limit else "")
+
+
+def collect_module_facts(source: str, path: Path, tree: ast.Module | None = None) -> ModuleFacts:
+    """Extract import edges, name/attribute uses, ``__all__`` and public defs (reusing ``tree`` if given)."""
     dotted = module_dotted_name(path)
     is_package = path.name == "__init__.py"
-    tree = safe_parse(source)
+    tree = tree or safe_parse(source)
     if tree is None:
         # Unparseable corpus file: warn and contribute no facts. Safe by construction — the
         # blocking floor is raw-text grep, not this resolver (a resolver miss only adds noise).
@@ -558,7 +563,8 @@ def runtime_consumer_check(paths: list[Path]) -> int:
         if verdict == "block":
             blocking.append(definition)  # referenced nowhere in src/scripts/tests == truly dead
         else:
-            assert reason is not None  # advisory verdicts always carry a reason
+            if reason is None:  # advisory verdicts always carry a reason (an assert would vanish under -O)
+                raise RuntimeError(f"advisory verdict without a reason for {definition.symbol}")
             advisory.append((definition, reason))
 
     if advisory:
