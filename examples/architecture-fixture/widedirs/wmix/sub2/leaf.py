@@ -1,0 +1,2 @@
+def leaf_2() -> int:
+    return 2
