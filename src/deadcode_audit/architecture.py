@@ -7,14 +7,14 @@ deslop-please (MIT) ``src/lint/shallow.rs``; reference resolution reuses the rea
 Judged units are Python packages (every runtime file under the directory; reported at ``__init__.py``)
 and plain file modules (reported at the file). Within a unit:
 
-* **working items** — top-level functions, public classes (one constructor unit each) and the methods
-  of top-level classes. Excluded: dunders, ``@property``/setters, ``@overload``, ``@abstractmethod``,
+* **working items** — top-level functions and the methods of top-level classes (classes themselves are
+  never items; they only head lists). Excluded: dunders, ``@property``/setters, ``@overload``, ``@abstractmethod``,
   thin wrappers (:mod:`deadcode_audit.detectors.thin_wrapper`), and methods of classes with an external base.
-* **shown** — public free functions / public classes referenced by runtime code OUTSIDE the unit (tests
+* **shown** — public free functions referenced by runtime code OUTSIDE the unit (tests
   and package ``__init__`` facades never count). v1: methods count toward the total only, so the rule
   is false-negative-biased.
-* **lists** — shown functions grouped by the in-unit class they mention (a shown class heads its own
-  list); a function mentioning none forms a list of its own.
+* **lists** — shown functions grouped by the in-unit class they mention; a function mentioning none forms a list of its own. A package whose items equal those of one
+  of its file modules (facade + sole module) is skipped: the module is reported instead.
 
 The rule fires when the interface is big (``shown`` over :data:`SHOWN_LIMIT`), it does not collapse into
 few short lists, and little is hidden behind it (``hidden <= shown * BREAK_EVEN``).
@@ -60,7 +60,7 @@ _EXCLUDED_DECORATORS = frozenset({"property", "setter", "getter", "deleter", "ov
 @dataclass(frozen=True)
 class _Item:
     name: str
-    kind: str  # "function" | "class" | "method"
+    kind: str  # "function" | "method"
     names: frozenset[str] = frozenset()  # every Name id in a function (signature + body), for class grouping
 
 
@@ -125,8 +125,6 @@ def _read_module(path: Path, source: str, known: set[str]) -> _Module | None:
             names = frozenset(n.id for n in ast.walk(node) if isinstance(n, ast.Name))
             items.append(_Item(node.name, "function", names))
         elif isinstance(node, ast.ClassDef):
-            if not node.name.startswith("_"):
-                items.append(_Item(node.name, "class"))
             if not _has_external_base(node, local, fact, known):
                 items.extend(
                     _Item(member.name, "method")
@@ -150,6 +148,10 @@ def _units(modules: list[_Module]) -> dict[str, list[_Module]]:
     return units
 
 
+def _item_set(members: list[_Module]) -> frozenset[tuple[str, str, str]]:
+    return frozenset((m.dotted, item.name, item.kind) for m in members for item in m.items)
+
+
 def _inside(dotted: str, unit: str) -> bool:
     return dotted == unit or dotted.startswith(f"{unit}.")
 
@@ -160,16 +162,12 @@ def _cap(names: list[str]) -> str:
 
 
 def _lists(shown: list[tuple[_Module, _Item]], classes: set[str]) -> dict[tuple[str, str], list[str]]:
-    """Group shown items: a class heads its own list; a function joins the in-unit class it mentions, else stands alone."""
+    """Group shown functions: each joins the in-unit class it mentions, else stands alone."""
     groups: dict[tuple[str, str], list[str]] = {}
-    for _module, item in shown:
-        if item.kind == "class":
-            groups[("class", item.name)] = [item.name]
     for module, item in shown:
-        if item.kind == "function":
-            mentioned = item.names & classes
-            key = ("class", min(mentioned)) if mentioned else ("function", f"{module.dotted}.{item.name}")
-            groups.setdefault(key, []).append(item.name)
+        mentioned = item.names & classes
+        key = ("class", min(mentioned)) if mentioned else ("function", f"{module.dotted}.{item.name}")
+        groups.setdefault(key, []).append(item.name)
     return groups
 
 
@@ -193,10 +191,13 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
 
     report_path = {m.dotted: m.path for m in modules}
     scanned = set(files)
+    units = _units(modules)
+    packages = {m.dotted for m in modules if m.is_package}
+    module_items = {_item_set(members) for unit, members in units.items() if unit not in packages}
     diagnostics: list[Diagnostic] = []
-    for unit, members in _units(modules).items():
-        if report_path[unit] not in scanned:
-            continue
+    for unit, members in units.items():
+        if report_path[unit] not in scanned or (unit in packages and _item_set(members) in module_items):
+            continue  # not scanned, or a facade package that adds nothing over its sole module
         total = sum(len(m.items) for m in members)
         shown = [(m, item) for m in members for item in m.items if referenced_outside(m, item, unit)]
         hidden = total - len(shown)
@@ -206,7 +207,7 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
         longest = max(groups.values(), key=len)
         if len(groups) <= LISTS_LIMIT and len(longest) <= LIST_LENGTH_LIMIT:
             continue
-        kind = "package" if any(m.is_package and m.dotted == unit for m in members) else "module"
+        kind = "package" if unit in packages else "module"
         diagnostics.append(
             diagnostic_from_spec(
                 SHALLOW_MODULE_RULE,
