@@ -98,7 +98,7 @@ def render_sarif(diagnostics: list[Diagnostic]) -> str:
         for diag in sorted(diagnostics, key=lambda d: (d.file_path, d.line, d.rule))
     ]
     sarif = {
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",  # ai-slop: ignore[hardcoded-url] SARIF spec constant
         "version": "2.1.0",
         "runs": [
             {

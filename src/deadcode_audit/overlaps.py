@@ -98,7 +98,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
             try:
                 funcs.extend(_SourcedFunc(record, text, blind_text)
                              for record, text, blind_text in collect_functions_with_blind(source, path))
-            except SyntaxError:  # same policy as Python: one malformed file never aborts the audit
+            except SyntaxError:  # ai-slop: ignore[swallowed-exception] stderr warning + skip: one malformed file never aborts the audit
                 print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
         source = diffscope.read_text(path)
