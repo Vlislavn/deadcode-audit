@@ -44,7 +44,8 @@ Rules, scoring, exclusions, accepted cycles and CI thresholds go in the same fil
 | Enforce quality policy | `deadcode ci --json` — exit 1 on errors or score below threshold |
 | Security and swallowed errors | `deadcode security [paths...]` — fail-closed, independent of configurable rule severity |
 | Unused public symbols | `deadcode reachability-scan --json` — advisory; also `reachability/duplicate-constant` (same module-level string constant in 2+ modules) |
-| Import cycles | `deadcode cycles [--advisory] --json` |
+| Import cycles | `deadcode cycles [--advisory] --json` — per cycle: ties with imported names (cost = distinct names), `cheapest cut`, shortest `circle`; an `allowed_cycles` entry covers any cycle whose members are a subset of it; advisory `kind: package` cycles between sibling packages (never exit 1) |
+| Architecture | `deadcode scan` also reports `architecture/shallow-module` (a module/package whose outside-visible functions are > 7 in a wide list and not outnumbered by hidden ones) and `architecture/wide-directory` (> 15 direct members); advisory warnings. Oracle: `examples/architecture-fixture/EXPECTED.md` |
 | Size and churn | `deadcode growth --base BASE [--head HEAD] [--json] [files...]` — changed non-test Python files, exact commits; no bloat threshold; `--hotspots` ranks non-test Python and JS/JSX files by commits x lines x max complexity (ruff C901 for Python, pinned Oxlint `complexity` for JS; a language's complexity is omitted with a note when its tool is unavailable) and names each file's most complex function, read-only |
 | Function overlap | `deadcode overlaps [paths...] --json` — advisory, two-pass; Python and JS/TS (`--no-embed` for pass 1 only) |
 | Diff gates vs main | `deadcode vulture-changed`, `redundancy`, `runtime-consumer-check` — all with `--compare-branch main` |

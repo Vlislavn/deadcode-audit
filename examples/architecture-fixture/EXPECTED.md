@@ -28,7 +28,7 @@ Cycle id = member set. "ties" = import edges with imported names; cost = distinc
 
 | Case | Rule | Path (members) | Result | Reason |
 |---|---|---|---|---|
-| (a) cheap | cycles | `cyc/cheap/m_a.py` <-> `cyc/cheap/m_b.py` (`cheap.m_a`, `cheap.m_b`) | FIRE (hard, not allowed) | `m_a -> m_b` imports 1 name (`b_one`), `m_b -> m_a` imports 3 (`a_one a_two a_three`). Expected line: `cheapest cut: cheap.m_a -> cheap.m_b (1 names) cyc/cheap/m_a.py:2` (wording of the count as the implementation prints it; cut must be a->b at m_a.py:2). |
+| (a) cheap | cycles | `cyc/cheap/m_a.py` <-> `cyc/cheap/m_b.py` (`cheap.m_a`, `cheap.m_b`) | FIRE (hard, not allowed) | `m_a -> m_b` imports 1 name (`b_one`), `m_b -> m_a` imports 3 (`a_one a_two a_three`). Expected line: `cheapest cut: cheap.m_a -> cheap.m_b (1 name) cyc/cheap/m_a.py:2` (wording of the count as the implementation prints it; cut must be a->b at m_a.py:2). |
 | (b) shrink | cycles | `cyc/shrink/a.py` <-> `cyc/shrink/b.py` | FIRE as a cycle but **covered** (`allowed: true`, no exit-1 contribution) | Actual member set {a,b} is a SUBSET of the entry `shrink.a <-> shrink.b <-> shrink.c`. `c` only imports `a` (not in the cycle). |
 | (c) grow | cycles | `cyc/grow/a.py` -> `b.py` -> `c.py` -> `a.py` (`grow.a`, `grow.b`, `grow.c`) | FIRE (hard, **not** covered) | Entry `grow.a <-> grow.b` covers only {a,b}; the cycle grew to {a,b,c}, which is not a subset of the entry. |
 | (d) package cycle, no file cycle | cycles | `cyc/pkgp/x/m1.py` -> `cyc/pkgp/y/m2.py`; `cyc/pkgp/y/m3.py` -> `cyc/pkgp/x/m4.py` | FIRE: exactly one cycle, `kind: package`, members {`pkgp.x`, `pkgp.y`}; NO file cycle | m2 and m4 import nothing back, so no file SCC. Lifted edges `pkgp.x -> pkgp.y` and `pkgp.y -> pkgp.x` (LCA `pkgp`) close a package cycle. Advisory: never exit 1 by itself. |
@@ -108,3 +108,13 @@ Members = direct non-test source files + subdirectories containing source. More 
    cut choice among equal costs is not asserted. For the soft cycle (g1) it is not settled whether the lazy edge
    must be preferred as the cut.
 7. **Count wording.** The brief prints `(N names)`; for N=1 the implementation may print `1 name`/`1 names`.
+
+## Lead decisions (2026-11-24, after the open questions above)
+
+- `__init__.py` is NOT a directory member: `widedirs/open_init16/` (`__init__` + 15 files) is NO-FIRE.
+- (l2) grouped_big (one class heading a list of 9) is FIRE.
+- A covered cycle such as (b) is listed only by `deadcode cycles --advisory` (`allowed: true`); blocking mode hides it.
+- A wide directory without `__init__.py` is reported at the directory path, line 1.
+
+Verified on the integrated branch: cycles (a)(c)(e)(f)(g1)(v) hard/soft as listed, (b) covered, package cycles (d)(f) only;
+shallow-module FIRE for h, h2, l2, m1, s, u; wide-directory FIRE for o, r.
