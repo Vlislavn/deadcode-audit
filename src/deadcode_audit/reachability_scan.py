@@ -79,7 +79,7 @@ _DOTTED_PATH = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)+")  # "pkg.module.Name"
 def build_candidates() -> list[PublicSymbolDefinition]:
     """Every public top-level symbol in ``src/`` — the whole-tree corpus (NOT diff-scoped)."""
     candidates: list[PublicSymbolDefinition] = []
-    for path in diffscope.all_src_files():
+    for path in diffscope.runtime_files():
         candidates.extend(public_symbol_definitions(path))
     return candidates
 

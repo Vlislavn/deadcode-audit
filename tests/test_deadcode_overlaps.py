@@ -115,7 +115,7 @@ def test_render_human_shows_embed_na_when_pass1_only() -> None:
 
 def test_build_corpus_captures_source(monkeypatch: pytest.MonkeyPatch) -> None:
     module_src = "def alpha():\n    return 1\n\n\ndef beta(x):\n    return x + 1\n"
-    monkeypatch.setattr(overlaps.diffscope, "all_src_files", lambda: [Path("src/m.py")])
+    monkeypatch.setattr(overlaps.diffscope, "runtime_files", lambda **_: [Path("src/m.py")])
     monkeypatch.setattr(overlaps.diffscope, "read_text", lambda _p: module_src)
     funcs = overlaps.build_corpus()
     by_symbol = {f.record.symbol: f for f in funcs}
@@ -125,7 +125,7 @@ def test_build_corpus_captures_source(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_build_corpus_none_segment_falls_back_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     module_src = "def alpha():\n    return 1\n"
-    monkeypatch.setattr(overlaps.diffscope, "all_src_files", lambda: [Path("src/m.py")])
+    monkeypatch.setattr(overlaps.diffscope, "runtime_files", lambda **_: [Path("src/m.py")])
     monkeypatch.setattr(overlaps.diffscope, "read_text", lambda _p: module_src)
     monkeypatch.setattr(overlaps.ast, "get_source_segment", lambda *_a, **_k: None)  # force the fail-open path
     funcs = overlaps.build_corpus()

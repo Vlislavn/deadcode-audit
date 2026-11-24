@@ -44,7 +44,7 @@ HELD_IN_MIND = 7  # lists of ties / circle nodes longer than this are capped wit
 def _internal_nodes() -> dict[str, Path]:
     """Map every ``src/`` module's dotted name to its file (the import-graph node set)."""
     nodes: dict[str, Path] = {}
-    for path in diffscope.all_src_files():
+    for path in diffscope.runtime_files():
         dotted = module_dotted_name(path)
         if dotted is not None:
             nodes[dotted] = path

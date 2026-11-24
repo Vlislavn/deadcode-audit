@@ -269,18 +269,6 @@ def reap_next_mutant_child(real_wait: Callable[[], tuple[int, int]], mutant_chil
             return pid, wait_status
 
 
-def build_do_not_mutate_patterns(copy_roots: list[Path], targets: list[Path]) -> list[str]:
-    """Return file globs that keep mutation focused on the changed files only."""
-    target_paths = {path.as_posix() for path in targets}
-    ignored: list[str] = []
-    for root in copy_roots:
-        for candidate in sorted((diffscope.REPO_ROOT / root).rglob("*.py")):
-            rel_path = candidate.relative_to(diffscope.REPO_ROOT).as_posix()
-            if rel_path not in target_paths:
-                ignored.append(rel_path)
-    return ignored
-
-
 def build_mutation_test_roots(paths: list[Path]) -> list[str]:
     """Return the narrowest test roots that exercise the changed mutation targets.
 

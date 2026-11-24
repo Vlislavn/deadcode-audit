@@ -71,18 +71,8 @@ def vulture_ignore_decorators_arg() -> str:
 
 # --- Mutation gate (Tier 5) self-targets ---
 
-# The dead-code module mutation-tests ITSELF when its source changes; any file under this
-# directory is a valid mutation target (generalised from the former single-file hardcode so
-# the whole package is self-protected, not just one module).
-SELF_TARGET_DIR = Path("scripts/deadcode")
-
 # Non-``src`` runtime scripts that are mutation targets in addition to the package itself.
 EXTRA_MUTATION_TARGETS: frozenset[Path] = frozenset({Path("scripts/evals/monorepo_eval.py")})
-
-
-def is_self_target(path: Path) -> bool:
-    """True for a file inside the dead-code module (mutation self-target)."""
-    return path.as_posix().startswith(f"{SELF_TARGET_DIR.as_posix()}/")
 
 
 def is_mutation_target(path: Path) -> bool:

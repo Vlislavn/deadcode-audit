@@ -85,7 +85,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
         selected = scan.resolve_target_files(paths, changed=False, compare_branch="main",
                                              exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
     else:
-        python = diffscope.all_src_files()
+        python = diffscope.runtime_files()
         candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
                                                exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
         selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
