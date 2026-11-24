@@ -3,10 +3,11 @@
 Layout (one concern each):
 
 * :mod:`diffscope`, :mod:`layout`, :mod:`config` — git/changed-line primitives, repo layout, cross-tier constants.
-* :mod:`structure`   — ``vulture_gate`` (Tier 2), ``reachability`` + ``resolver`` (Tier 4), ``redundancy`` (Tier 6a),
-  ``cycles``, ``architecture``, ``reachability_scan``.
-* :mod:`overlap`     — ``clones`` (Tier 6b), ``overlaps`` and their embedding/cache/blind-text helpers.
-* :mod:`js`          — Oxlint/jscpd adapter and the Tree-sitter function collector.
+* :mod:`structure`   — ``vulture_gate`` (Tier 2), ``reachability`` + ``resolver`` (Tier 4), ``cycles``,
+  ``architecture``, ``reachability_scan``.
+* :mod:`overlap`     — ``redundancy`` (Tier 6a), ``clones`` (Tier 6b), ``overlaps`` and their embedding/cache/blind-text
+  helpers, plus the Tree-sitter JS/TS function collector (``js_*``).
+* :mod:`javascript`  — the pinned Oxlint/jscpd adapter.
 * :mod:`gates`       — ``mutation`` (Tier 5), ``stub_sensitivity``, ``growth``, ``history``.
 * :mod:`cli`         — ``python -m deadcode_audit <command>`` dispatch.
 
@@ -39,16 +40,16 @@ from deadcode_audit.overlap.clones import (
     find_near_duplicate_functions,
     normalize_function,
 )
-from deadcode_audit.structure.reachability import (
-    PublicSymbolDefinition,
-    runtime_consumer_check,
-    symbols_without_runtime_consumers,
-)
-from deadcode_audit.structure.redundancy import (
+from deadcode_audit.overlap.redundancy import (
     RedundancyFinding,
     find_redundant_transforms,
     run_check,
     run_files,
+)
+from deadcode_audit.structure.reachability import (
+    PublicSymbolDefinition,
+    runtime_consumer_check,
+    symbols_without_runtime_consumers,
 )
 from deadcode_audit.structure.vulture_gate import (
     VultureFinding,

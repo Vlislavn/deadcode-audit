@@ -14,9 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope, layout
+from deadcode_audit import config, diffscope, javascript, layout
 from deadcode_audit.framework import Detector, run_detectors
-from deadcode_audit.js import javascript
 from deadcode_audit.scoring import (
     DEFAULT_SMOOTHING,
     GOOD_THRESHOLD,

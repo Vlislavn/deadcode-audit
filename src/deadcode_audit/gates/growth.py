@@ -17,8 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from deadcode_audit import diffscope, layout
-from deadcode_audit.js import javascript
+from deadcode_audit import diffscope, javascript, layout
 
 METRICS = ("lines", "functions", "classes", "short_functions", "imports")
 HOTSPOT_JS_SUFFIXES = javascript.JS_JSX_SUFFIXES

@@ -28,7 +28,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import layout
+from deadcode_audit import javascript, layout
 from deadcode_audit.detectors import thin_wrapper
 from deadcode_audit.diagnostic import (
     ENGINE_CODE_QUALITY,
@@ -38,7 +38,6 @@ from deadcode_audit.diagnostic import (
     diagnostic_from_spec,
 )
 from deadcode_audit.framework import FileContext, safe_parse
-from deadcode_audit.js import javascript
 from deadcode_audit.structure.resolver import (
     ModuleFacts,
     build_reference_index,

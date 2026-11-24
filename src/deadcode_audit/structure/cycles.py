@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from deadcode_audit import config, layout
 from deadcode_audit.framework import safe_parse
-from deadcode_audit.structure.resolver import _resolve_relative, capped, module_dotted_name
+from deadcode_audit.structure import resolver
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,7 +45,7 @@ def _internal_nodes() -> dict[str, Path]:
     """Map every ``src/`` module's dotted name to its file (the import-graph node set)."""
     nodes: dict[str, Path] = {}
     for path in layout.runtime_files():
-        dotted = module_dotted_name(path)
+        dotted = resolver.module_dotted_name(path)
         if dotted is not None:
             nodes[dotted] = path
     return nodes
@@ -123,7 +123,7 @@ def _import_names(
                     set(uses.get(alias.asname or alias.name, ())) or {alias.name},
                 )
         return
-    module = _resolve_relative(dotted, is_package, node.level, node.module)
+    module = resolver._resolve_relative(dotted, is_package, node.level, node.module)
     for alias in node.names if module is not None else ():
         target = _edge_target(module, None if alias.name == "*" else alias.name, nodes)
         if target is not None:
@@ -398,14 +398,14 @@ def _print_cycle(f: Found, allowed: list[set[str]], *, advisory: bool) -> None:
     tag = "  [allowlisted]" if advisory and _covered(f.cycle, allowed) else ""
     label = "package cycle" if f.kind == "package" else "cycle"
     print(f"  {label}{tag}")
-    print(f"    members: {capped(f.cycle, HELD_IN_MIND)}")
+    print(f"    members: {resolver.capped(f.cycle, HELD_IN_MIND)}")
     if not f.ties:
         return
     cut = f.ties[0]
     print(f"    cheapest cut: {cut.src} -> {cut.dst} ({len(cut.names)} name{'s' * (len(cut.names) != 1)}) {_site(cut)}")
     if f.circle:
-        print(f"    circle: {capped(f.circle, HELD_IN_MIND).replace(', ', ' -> ')}")
-    print(f"    ties: {capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties], HELD_IN_MIND)}")
+        print(f"    circle: {resolver.capped(f.circle, HELD_IN_MIND).replace(', ', ' -> ')}")
+    print(f"    ties: {resolver.capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties], HELD_IN_MIND)}")
 
 
 def _incomplete(unparsed: int) -> str:

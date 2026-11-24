@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from deadcode_audit.overlap.clones import collect_functions, find_near_duplicate_functions
-from deadcode_audit.structure.redundancy import find_redundant_transforms, run_files
+from deadcode_audit.overlap.redundancy import find_redundant_transforms, run_files
 
 
 def _kinds(src: str) -> list[str]:

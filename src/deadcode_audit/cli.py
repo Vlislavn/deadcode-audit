@@ -15,7 +15,8 @@ from deadcode_audit import config, diffscope, layout, output
 from deadcode_audit import scan as scan_mod
 from deadcode_audit.diagnostic import Severity
 from deadcode_audit.gates import history, mutation
-from deadcode_audit.structure import reachability, redundancy, vulture_gate
+from deadcode_audit.overlap import redundancy
+from deadcode_audit.structure import reachability, vulture_gate
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -155,7 +156,7 @@ def _cmd_ci(args: argparse.Namespace) -> int:
 def _cmd_rules(_args: argparse.Namespace) -> int:
     from deadcode_audit.detectors import ALL_DETECTORS
     from deadcode_audit.framework import all_rule_specs
-    from deadcode_audit.js.javascript import RULE_SPECS
+    from deadcode_audit.javascript import RULE_SPECS
     from deadcode_audit.structure.architecture import RULES as ARCHITECTURE_RULES
     from deadcode_audit.structure.reachability_scan import (
         DEAD_SYMBOL_RULE,

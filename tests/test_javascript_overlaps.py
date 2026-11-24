@@ -13,7 +13,7 @@ import pytest
 from deadcode_audit import layout
 from deadcode_audit.overlap import clones, overlap_embed, overlaps
 from deadcode_audit.cli import main
-from deadcode_audit.js.collect import collect_functions_with_blind
+from deadcode_audit.overlap.js_collect import collect_functions_with_blind
 
 
 def sources(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from deadcode_audit.js.parser import node_key, source_text
+from deadcode_audit.overlap.js_parser import node_key, source_text
 
 FUNCTION_TYPES = frozenset(
     {

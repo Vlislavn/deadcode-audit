@@ -32,9 +32,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, layout, scan
+from deadcode_audit import config, javascript, layout, scan
 from deadcode_audit.framework import safe_parse
-from deadcode_audit.js import javascript
 from deadcode_audit.overlap import blind, clones
 
 if TYPE_CHECKING:
@@ -95,7 +94,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
     selected = [path for path in selected if not (layout.is_test_path(path) or javascript.is_js_test_file(path))]
     for path in selected:
         if path.suffix in javascript.SUFFIXES:
-            from deadcode_audit.js.collect import collect_functions_with_blind
+            from deadcode_audit.overlap.js_collect import collect_functions_with_blind
             source = (layout.REPO_ROOT / path).read_bytes().decode("utf-8")
             try:
                 funcs.extend(_SourcedFunc(record, text, blind_text)

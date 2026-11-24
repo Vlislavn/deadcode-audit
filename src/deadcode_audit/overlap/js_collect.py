@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deadcode_audit.js.parser import (
+from deadcode_audit.overlap.blind import rename
+from deadcode_audit.overlap.clones import FuncRecord, semantic_signature
+from deadcode_audit.overlap.js_parser import (
     load_parser,
     location,
     node_key,
@@ -13,14 +15,12 @@ from deadcode_audit.js.parser import (
     repair_jsx_ampersands,
     source_text,
 )
-from deadcode_audit.js.scopes import (
+from deadcode_audit.overlap.js_scopes import (
     FUNCTION_TYPES,
     TRANSPARENT_EXPRESSION_TYPES,
     binding_label,
     runtime_body_tokens,
 )
-from deadcode_audit.overlap.blind import rename
-from deadcode_audit.overlap.clones import FuncRecord, semantic_signature
 
 # Identifier leaves renamed in the identifier-blind text (blind.py RULE): names, properties, shorthand properties.
 _IDENTIFIER_LEAF_TYPES = frozenset(
