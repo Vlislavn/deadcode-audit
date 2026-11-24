@@ -222,7 +222,7 @@ def _run(
             try:
                 out, _ = proc.communicate(timeout=_POLL_SECONDS)
                 return proc.returncode, out
-            except subprocess.TimeoutExpired:  # ai-slop: ignore[swallowed-exception] poll-loop idiom: timeout means still running
+            except subprocess.TimeoutExpired:  # poll-loop idiom: timeout means still running
                 pass
             rss = _group_rss(proc.pid)
             if peak is not None:
