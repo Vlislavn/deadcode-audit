@@ -95,6 +95,11 @@ Members = direct non-test source files + subdirectories containing source. More 
 | (q) tests dir | wide-directory | `tests/` | NO-FIRE | 20 test files (19 `test_basic_NN.py` + `test_shaltest.py`); the tests dir never counts. |
 | (r) mixed | wide-directory | `widedirs/wmix/` (no `__init__.py`: reported at the directory) | FIRE | 10 files `mod_01..10.py` + 6 subdirs `sub1..6/` each with `leaf.py` = 16 members. |
 
+JS/TS (not in this fixture: a `.js` file would make every fixture scan need a local Oxlint). Verified in a scratch git
+repo (`src/lib/` with 16 `.js` files, one changed on a branch): `deadcode scan --changed` FIRES wide-directory for `src/lib`
+(a JS-only change is a trigger). With 13 `.js` + 3 `*.test.js` (or `*.test.ts`/`*.spec.ts`/`*.spec.js`) the 3 test files are not
+members: 13 members, NO-FIRE. Test files are also not triggers.
+
 ## OPEN QUESTIONS (not asserted by the rows above)
 
 0. **Facade skip and shown.** For the module unit `core.py` of a facade package, the re-export in `__init__.py`

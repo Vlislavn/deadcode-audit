@@ -246,29 +246,36 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
     return sorted(diagnostics, key=lambda d: (d.file_path, d.line))
 
 
+def _is_test_source(path: Path) -> bool:
+    """Test files of any language: ``*_test.py``, ``*.test.*``, ``*.spec.*`` and :func:`javascript.is_js_test_file`."""
+    return path.stem.endswith("_test") or ".test." in path.name or ".spec." in path.name or javascript.is_js_test_file(path)
+
+
 def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
     """One advisory warning per directory with more than :data:`MEMBERS_LIMIT` direct members.
 
     Members are source files (not ``__init__.py``) plus subdirectories holding some, counted from disk (the shared
     runtime walker: source roots, no test/vendored/cache paths), so a
-    ``--changed`` scan sees the whole directory; a directory is reported when a scanned file lies under it, at its
+    ``--changed`` scan sees the whole directory; a directory is reported when a scanned non-test source file (Python,
+    JavaScript or TypeScript) lies under it, at its
     ``__init__.py`` if present, else at the directory itself.
     """
     roots = set(diffscope.source_roots())
     file_members: dict[Path, list[str]] = defaultdict(list)
     dir_members: dict[Path, set[str]] = defaultdict(set)
     for path in diffscope.runtime_files(suffixes=javascript.SUFFIXES | {".py"}):
-        if path.name == "__init__.py" or path.stem.endswith("_test"):
-            continue  # a package marker is not a member; ``*_test.py`` is a test file
+        if path.name == "__init__.py" or _is_test_source(path):
+            continue  # a package marker is not a member; test files are not members
         file_members[path.parent].append(path.name)
         child = path.parent
         while child not in roots and child != Path("."):
             dir_members[child.parent].add(child.name)
             child = child.parent
+    triggers = [f for f in files if not _is_test_source(f)]
     diagnostics: list[Diagnostic] = []
     for directory in sorted(file_members.keys() | dir_members.keys()):
         names, subdirs = sorted(file_members[directory]), sorted(dir_members[directory])
-        if len(names) + len(subdirs) <= MEMBERS_LIMIT or not any(f.is_relative_to(directory) for f in files):
+        if len(names) + len(subdirs) <= MEMBERS_LIMIT or not any(f.is_relative_to(directory) for f in triggers):
             continue
         init = directory / "__init__.py"
         diagnostics.append(
@@ -283,7 +290,3 @@ def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
         )
     return diagnostics
 
-
-def diagnostics(files: list[Path]) -> list[Diagnostic]:
-    """All whole-tree architecture advisories for the scanned ``files``."""
-    return [*shallow_module_diagnostics(files), *wide_directory_diagnostics(files)]
