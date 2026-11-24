@@ -97,7 +97,7 @@ def _python_diagnostics(files: list[Path], detectors: Sequence[Detector], dead_s
     if dead_symbols:
         diagnostics += reachability_scan.dead_symbol_diagnostics(files)
         diagnostics += reachability_scan.duplicate_constant_diagnostics(files)
-        diagnostics += architecture.diagnostics(files)
+        diagnostics += architecture.shallow_module_diagnostics(files)
     return diagnostics
 
 
@@ -144,7 +144,8 @@ def run_source_scan(files: list[Path], detectors: Sequence[Detector], cfg: confi
     """Compose native Python detectors and the optional local JS/TS backend."""
     python = [path for path in files if path.suffix == ".py"]
     js = [path for path in files if path.suffix in javascript.SUFFIXES]
+    findings = [*_python_diagnostics(python, detectors, True), *architecture.wide_directory_diagnostics(files)]
     if not js:
-        return run_scan(python, detectors, cfg)
-    findings = [*_python_diagnostics(python, detectors, True), *javascript.run(js)]
+        return _result(findings, len(python), cfg, detectors)
+    findings += javascript.run(js)
     return _result(findings, len(files), cfg, detectors, {"python": len(python), "javascript_typescript": len(js)})

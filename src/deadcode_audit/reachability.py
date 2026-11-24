@@ -371,6 +371,64 @@ def resolved_reference_exists(
     return bool(referencing_modules(symbol, def_dotted, facts, reexport_map))
 
 
+def resolve_identity(
+    module: str, name: str, by_dotted: dict[str, ModuleFacts], visited: set[tuple[str, str]] | None = None
+) -> tuple[str, str] | None:
+    """Defining ``(module, name)`` of ``name`` exposed by ``module``, following re-exports; None when undefined.
+
+    A name is defined where a public ``def``/``class`` has it; otherwise a from-import binding it (or a star import
+    that exposes it) re-exports another module's name. ``visited`` makes import cycles terminate.
+    """
+    visited = set() if visited is None else visited
+    if (module, name) in visited or module not in by_dotted:
+        return None
+    visited.add((module, name))
+    fact = by_dotted[module]
+    if name in fact.public_defs:
+        return module, name
+    for source, imported, asname in fact.from_imports:
+        if asname == name and (source, imported) != (module, name):
+            return resolve_identity(source, imported, by_dotted, visited)
+    for star in sorted(fact.star_from):
+        if found := resolve_identity(star, name, by_dotted, visited):
+            return found
+    return None
+
+
+def build_reference_index(facts: list[ModuleFacts]) -> dict[tuple[str, str], set[str]]:
+    """Map a defining ``(module, name)`` -> dotted modules that USE it (identity-aware, unlike :func:`referencing_modules`).
+
+    A consumer counts only when the name it bound is loaded (``ast.Name`` Load, or ``alias.attr`` for a module
+    alias): an unused import and an ``__all__`` string are not uses, and a re-export is followed to the defining
+    module, so a homonym defined elsewhere is never credited. Every module (``__init__`` included) is a consumer iff
+    it uses the name. A qualified chain longer than ``alias.attr`` (``pkg.mod.f()``) is not seen (errs to "unused").
+    """
+    by_dotted = {fact.dotted: fact for fact in facts if fact.dotted}
+    index: dict[tuple[str, str], set[str]] = {}
+
+    def add(module: str, name: str, consumer: str) -> None:
+        identity = resolve_identity(module, name, by_dotted) or (module, name)
+        index.setdefault(identity, set()).add(consumer)
+
+    for fact in by_dotted.values():
+        aliases: dict[str, str] = {}  # local name -> module it is bound to
+        for module, name, asname in fact.from_imports:
+            if f"{module}.{name}" in by_dotted and resolve_identity(module, name, by_dotted) is None:
+                aliases[asname] = f"{module}.{name}"  # ``from pkg import submodule``
+            elif asname in fact.used_names:
+                add(module, name, fact.dotted)
+        for module, asname in fact.plain_imports:
+            if asname == module or asname != module.split(".")[0]:
+                aliases[asname] = module  # ``import m`` / ``import a.b as x``
+        for base, attr in fact.used_attrs:
+            if base in aliases:
+                add(aliases[base], attr, fact.dotted)
+        for star in fact.star_from:
+            for name in fact.used_names:
+                add(star, name, fact.dotted)
+    return index
+
+
 def entry_point_targets() -> set[tuple[str, str]]:
     """``(module, symbol)`` pairs named by ``pyproject.toml`` entry points — consumed by the installer, not by src.
 
