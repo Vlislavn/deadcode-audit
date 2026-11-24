@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope, javascript, reachability_scan
+from deadcode_audit import architecture, config, diffscope, javascript, reachability_scan
 from deadcode_audit.framework import Detector, run_detectors
 from deadcode_audit.scoring import (
     DEFAULT_SMOOTHING,
@@ -97,6 +97,7 @@ def _python_diagnostics(files: list[Path], detectors: Sequence[Detector], dead_s
     if dead_symbols:
         diagnostics += reachability_scan.dead_symbol_diagnostics(files)
         diagnostics += reachability_scan.duplicate_constant_diagnostics(files)
+        diagnostics += architecture.diagnostics(files)
     return diagnostics
 
 
@@ -109,7 +110,8 @@ def _result(
 ) -> ScanResult:
     """Apply config severities and score ``diagnostics`` over ``count`` scanned files."""
     diagnostics = config.apply_rule_severities(diagnostics, cfg.rule_severity)
-    style_rules = frozenset(spec.rule for detector in detectors for spec in detector.rules if spec.style)
+    specs = [spec for detector in detectors for spec in detector.rules] + list(architecture.RULES)
+    style_rules = frozenset(spec.rule for spec in specs if spec.style)
     score = calculate_score(
         diagnostics,
         weights=cfg.weights or None,
