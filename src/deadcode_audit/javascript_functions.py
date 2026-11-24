@@ -658,14 +658,18 @@ def _import_aliases(root, buffer: bytes) -> dict[str, str]:
     return aliases
 
 
-def _blind_text(function_node, buffer: bytes) -> str:
-    """The function's source with every identifier leaf renamed by first appearance (see ``blind.py``)."""
-    leaves, pending = [], [function_node]
+def _preorder(root):
+    """Every node under ``root`` (itself included) in document order, without recursion."""
+    pending = [root]
     while pending:
         node = pending.pop()
-        if node.type in _IDENTIFIER_LEAF_TYPES:
-            leaves.append((node.start_byte, node.end_byte))
+        yield node
         pending.extend(reversed(node.children))
+
+
+def _blind_text(function_node, buffer: bytes) -> str:
+    """The function's source with every identifier leaf renamed by first appearance (see ``blind.py``)."""
+    leaves = [(n.start_byte, n.end_byte) for n in _preorder(function_node) if n.type in _IDENTIFIER_LEAF_TYPES]
     return rename(buffer, function_node.start_byte, function_node.end_byte, leaves)
 
 
@@ -688,17 +692,7 @@ def collect_functions_with_blind(source: str, path: Path) -> list[tuple[FuncReco
     if root.has_error or issues:
         raise _parse_failure(root, buffer, path, typescript, issues)
 
-    functions = []
-    pending = [root]
-    while pending:
-        node = pending.pop()
-        if (
-            node.type in _FUNCTION_TYPES
-            and node.child_by_field_name("body") is not None
-        ):
-            functions.append(node)
-        pending.extend(reversed(node.children))
-
+    functions = [n for n in _preorder(root) if n.type in _FUNCTION_TYPES and n.child_by_field_name("body") is not None]
     functions.sort(key=lambda node: (node.start_byte, -node.end_byte))
     aliases = _import_aliases(root, analysed)
     records = []
