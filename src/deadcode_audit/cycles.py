@@ -26,7 +26,8 @@ from __future__ import annotations
 import ast
 import json
 import sys
-from typing import TYPE_CHECKING
+from collections import deque
+from typing import TYPE_CHECKING, NamedTuple
 
 from deadcode_audit import config, diffscope
 from deadcode_audit.framework import safe_parse
@@ -35,6 +36,9 @@ from deadcode_audit.reachability import _resolve_relative, module_dotted_name
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+
+HELD_IN_MIND = 7  # lists of ties / circle nodes longer than this are capped with '+N more'
 
 
 def _internal_nodes() -> dict[str, Path]:
@@ -69,7 +73,9 @@ def _is_type_checking(test: ast.expr) -> bool:
     )
 
 
-def _runtime_imports(tree: ast.Module) -> Iterator[tuple[ast.Import | ast.ImportFrom, bool]]:
+def _runtime_imports(
+    tree: ast.Module,
+) -> Iterator[tuple[ast.Import | ast.ImportFrom, bool]]:
     """Yield ``(import node, lazy)`` for every import that can run, skipping ``if TYPE_CHECKING:`` bodies.
 
     ``lazy`` is True when the import is nested in a function or method body. The ``else`` branch of a
@@ -87,41 +93,105 @@ def _runtime_imports(tree: ast.Module) -> Iterator[tuple[ast.Import | ast.Import
             stack.extend((child, inner) for child in ast.iter_child_nodes(node))
 
 
-def _import_targets(
-    node: ast.Import | ast.ImportFrom, dotted: str, is_package: bool, nodes: dict[str, Path]
-) -> set[str]:
-    """Internal modules one import statement depends on."""
+def _attribute_uses(tree: ast.Module) -> dict[str, set[str]]:
+    """Map ``<dotted expr>`` -> distinct attributes read from it (``m.a``, ``m.b`` -> ``{"m": {"a", "b"}}``)."""
+    uses: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, (ast.Name, ast.Attribute)):
+            uses.setdefault(ast.unparse(node.value), set()).add(node.attr)
+    return uses
+
+
+def _import_names(
+    node: ast.Import | ast.ImportFrom,
+    dotted: str,
+    is_package: bool,
+    nodes: dict[str, Path],
+    uses: dict[str, set[str]],
+) -> Iterator[tuple[str, set[str]]]:
+    """Yield ``(internal module, imported names)`` for one import statement.
+
+    ``from m import a, b`` names ``a``/``b``; ``import m`` names the distinct ``m.attr`` uses (or ``m`` itself,
+    cost 1, when no attribute use is resolvable).
+    """
     if isinstance(node, ast.Import):
-        names = [(alias.name, None) for alias in node.names]
-        module = None
-    else:
-        module = _resolve_relative(dotted, is_package, node.level, node.module)
-        names = [(module, None if alias.name == "*" else alias.name) for alias in node.names]
-    resolved = (_edge_target(mod, name, nodes) for mod, name in names if mod is not None)
-    return {target for target in resolved if target is not None}
+        for alias in node.names:
+            target = _edge_target(alias.name, None, nodes)
+            if target is not None:
+                yield (
+                    target,
+                    set(uses.get(alias.asname or alias.name, ())) or {alias.name},
+                )
+        return
+    module = _resolve_relative(dotted, is_package, node.level, node.module)
+    for alias in node.names if module is not None else ():
+        target = _edge_target(module, None if alias.name == "*" else alias.name, nodes)
+        if target is not None:
+            yield target, {alias.name}
 
 
-def build_import_graph(*, include_lazy: bool = True) -> dict[str, set[str]]:
-    """Build the directed runtime import graph over internal ``src/`` modules (node -> imported modules).
+class Tie(NamedTuple):
+    """One import edge ``src -> dst``: the imported names (its cost) and the first ``(file, line)`` site."""
+
+    src: str
+    dst: str
+    lazy: bool
+    names: frozenset[str]
+    site: tuple[str, int]
+
+
+def collect_ties() -> list[Tie]:
+    """Walk every ``src/`` module's runtime imports ONCE; one :class:`Tie` per ``(src, dst, lazy)`` edge."""
+    nodes = _internal_nodes()
+    acc: dict[tuple[str, str, bool], Tie] = {}
+    for dotted, path in nodes.items():
+        tree = safe_parse(diffscope.read_text(path))
+        if tree is None:
+            print(
+                f"warning: {path.as_posix()} does not parse; treating as no imports",
+                file=sys.stderr,
+            )
+            continue
+        uses = _attribute_uses(tree)
+        for node, lazy in _runtime_imports(tree):
+            for target, names in _import_names(node, dotted, path.name == "__init__.py", nodes, uses):
+                if target != dotted:  # a self-import is degenerate, not a cycle
+                    tie = Tie(
+                        dotted,
+                        target,
+                        lazy,
+                        frozenset(names),
+                        (path.as_posix(), node.lineno),
+                    )
+                    acc[(dotted, target, lazy)] = _merge(acc.get((dotted, target, lazy)), tie)
+    return list(acc.values())
+
+
+def _merge(old: Tie | None, new: Tie) -> Tie:
+    """Combine two ties of the same edge: union of names, earliest site, lazy only if both are."""
+    if old is None:
+        return new
+    return Tie(
+        new.src,
+        new.dst,
+        old.lazy and new.lazy,
+        old.names | new.names,
+        min(old.site, new.site),
+    )
+
+
+def build_import_graph(*, include_lazy: bool = True, ties: list[Tie] | None = None) -> dict[str, set[str]]:
+    """Derive the directed runtime import graph (node -> imported modules) from the import ties.
 
     ``if TYPE_CHECKING:`` imports are never edges. ``include_lazy=False`` also drops function-local imports,
     leaving the ``top`` edges that execute while the module is being imported.
     """
-    nodes = _internal_nodes()
-    graph: dict[str, set[str]] = {dotted: set() for dotted in nodes}
-    for dotted, path in nodes.items():
-        tree = safe_parse(diffscope.read_text(path))
-        if tree is None:
-            if include_lazy:  # warn once: the top-only pass re-reads the same files
-                print(f"warning: {path.as_posix()} does not parse; treating as no imports", file=sys.stderr)
-            continue
-        is_package = path.name == "__init__.py"
-        targets: set[str] = set()
-        for node, lazy in _runtime_imports(tree):
-            if include_lazy or not lazy:
-                targets |= _import_targets(node, dotted, is_package, nodes)
-        targets.discard(dotted)  # a self-import is degenerate, not a cycle
-        graph[dotted] = targets
+    graph: dict[str, set[str]] = {}
+    for tie in collect_ties() if ties is None else ties:
+        graph.setdefault(tie.dst, set())
+        edges = graph.setdefault(tie.src, set())
+        if include_lazy or not tie.lazy:
+            edges.add(tie.dst)
     return graph
 
 
@@ -198,57 +268,183 @@ def classify_cycles(graph: dict[str, set[str]], top_graph: dict[str, set[str]]) 
     return sorted(classified, key=lambda item: item[1] != "hard")  # stable: HARD first, order kept within a kind
 
 
-def _print_json(reported: list[tuple[list[str], str]], allowed: set[str], *, advisory: bool) -> None:
+class Found(NamedTuple):
+    """A reported cycle: members, kind (``hard``/``soft``/``package``), ties cheapest first, shortest circle."""
+
+    cycle: list[str]
+    kind: str
+    ties: list[Tie]
+    circle: list[str]
+
+
+def _covered(cycle: list[str], allowed: list[set[str]]) -> bool:
+    """True when the cycle's members are a SUBSET of some ``allowed_cycles`` entry's members."""
+    return any(set(cycle) <= entry for entry in allowed)
+
+
+def _circle_report(cycle: list[str], edges: dict[tuple[str, str], Tie]) -> tuple[list[Tie], list[str]]:
+    """Ties inside ``cycle`` (cheapest first) and the shortest circle through the cheapest one (BFS in tie order)."""
+    ties = sorted(
+        (edges[u, v] for u in cycle for v in cycle if (u, v) in edges),
+        key=lambda t: (len(t.names), t.src, t.dst),
+    )
+    if not ties:
+        return [], []
+    first, successors = ties[0], {}
+    for tie in ties:
+        successors.setdefault(tie.src, []).append(tie.dst)
+    prev: dict[str, str | None] = {first.dst: None}
+    queue = deque([first.dst])
+    while queue and first.src not in prev:
+        node = queue.popleft()
+        for nxt in successors.get(node, ()):
+            if nxt not in prev:
+                prev[nxt] = node
+                queue.append(nxt)
+    if first.src not in prev:
+        return ties, []
+    path: list[str] = []
+    node = first.src
+    while node is not None:  # walk back u -> ... -> v, then close the circle at u
+        path.append(node)
+        node = prev[node]
+    return ties, [first.src, *reversed(path)]
+
+
+def _lift(tie: Tie) -> Tie | None:
+    """Lift a file edge to the children of the lowest common ancestor of its ends (None if one contains the other)."""
+    src, dst = tie.src.split("."), tie.dst.split(".")
+    depth = next((i for i, (a, b) in enumerate(zip(src, dst, strict=False)) if a != b), None)
+    if depth is None:
+        return None
+    return tie._replace(src=".".join(src[: depth + 1]), dst=".".join(dst[: depth + 1]))
+
+
+def package_cycles(ties: list[Tie], file_cycles: list[list[str]]) -> list[Found]:
+    """Cycles between sibling packages: file edges lifted to the children of their LCA, SCC per parent.
+
+    A cycle whose members are exactly a file-level cycle's modules is already reported there and dropped.
+    """
+    edges: dict[tuple[str, str], Tie] = {}
+    for tie in ties:
+        if (lifted := _lift(tie)) is not None:
+            edges[lifted.src, lifted.dst] = _merge(edges.get((lifted.src, lifted.dst)), lifted)
+    parents: dict[str, dict[str, set[str]]] = {}
+    for src, dst in edges:
+        parents.setdefault(src.rpartition(".")[0], {}).setdefault(src, set()).add(dst)
+    known = {frozenset(c) for c in file_cycles}
+    found = [Found(c, "package", *_circle_report(c, edges)) for _, g in sorted(parents.items()) for c in find_cycles(g)]
+    return [f for f in found if frozenset(f.cycle) not in known]
+
+
+def _capped(items: list[str]) -> str:
+    return ", ".join(items[:HELD_IN_MIND]) + (
+        f", +{len(items) - HELD_IN_MIND} more" if len(items) > HELD_IN_MIND else ""
+    )
+
+
+def _site(tie: Tie) -> str:
+    return f"{tie.site[0]}:{tie.site[1]}"
+
+
+def _print_json(found: list[Found], allowed: list[set[str]], *, advisory: bool) -> None:
     cycles_json = [
-        {"key": _cycle_key(c), "members": c, "kind": kind, "allowed": _cycle_key(c) in allowed} for c, kind in reported
+        {
+            "key": _cycle_key(f.cycle),
+            "members": f.cycle,
+            "kind": f.kind,
+            "allowed": _covered(f.cycle, allowed),
+            "ties": [
+                {
+                    "src": t.src,
+                    "dst": t.dst,
+                    "cost": len(t.names),
+                    "names": sorted(t.names),
+                    "site": _site(t),
+                }
+                for t in f.ties[:HELD_IN_MIND]
+            ],
+            "circle": f.circle,
+        }
+        for f in found
     ]
-    print(json.dumps({"advisory": advisory, "count": len(reported), "cycles": cycles_json}, indent=2))
+    print(json.dumps({"advisory": advisory, "count": len(found), "cycles": cycles_json}, indent=2))
 
 
-def _print_text(reported: list[tuple[list[str], str]], total: int, allowed: set[str], *, advisory: bool) -> None:
-    hard = [c for c, kind in reported if kind == "hard"]
-    soft = [c for c, kind in reported if kind == "soft"]
+def _print_cycle(f: Found, allowed: list[set[str]], *, advisory: bool) -> None:
+    tag = "  [allowlisted]" if advisory and _covered(f.cycle, allowed) else ""
+    label = "package cycle" if f.kind == "package" else "cycle"
+    print(f"  {label}: {' -> '.join(f.cycle)} -> {f.cycle[0]}{tag}")
+    if not f.ties:
+        return
+    cut = f.ties[0]
+    print(f"    cheapest cut: {cut.src} -> {cut.dst} ({len(cut.names)} name{'s' * (len(cut.names) != 1)}) {_site(cut)}")
+    if f.circle:
+        print(f"    circle: {_capped(f.circle).replace(', ', ' -> ')}")
+    print(f"    ties: {_capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties])}")
+
+
+def _print_text(
+    found: list[Found],
+    total: int,
+    n_allowed: int,
+    allowed: list[set[str]],
+    *,
+    advisory: bool,
+) -> None:
+    hard = [f for f in found if f.kind == "hard"]
+    soft = [f for f in found if f.kind == "soft"]
+    package = [f for f in found if f.kind == "package"]
     if hard:
         label = "advisory" if advisory else "BLOCKING"
         print(f"import-cycle check ({label}): {len(hard)} circular import group(s) among src/ modules:")
-        for cycle in hard:
-            tag = "  [allowlisted]" if advisory and _cycle_key(cycle) in allowed else ""
-            print(f"  cycle: {' -> '.join(cycle)} -> {cycle[0]}{tag}")
+        for f in hard:
+            _print_cycle(f, allowed, advisory=advisory)
         print("  -> break the cycle (extract the shared piece, or invert one dependency); allowlist a")
         print("     deliberate cycle in .deadcode.yml under allowed_cycles by its '<a> <-> <b>' key")
     elif not total:
         print("import-cycle check: no circular imports among src/ modules")
     else:
         # Only allowlisted and/or soft cycles exist: claiming zero circular imports would be false advertising.
-        note = f" ({len(allowed)} cycle(s) allowlisted in .deadcode.yml)" if allowed else ""
+        note = f" ({n_allowed} cycle(s) allowlisted in .deadcode.yml)" if n_allowed else ""
         print(f"import-cycle check: no blocking circular imports{note}")
     if soft:
         print(f"import-cycle check: {len(soft)} soft cycle(s), each broken by a function-local import (not blocking):")
-        for cycle in soft:
-            tag = "  [allowlisted]" if _cycle_key(cycle) in allowed else ""
-            print(f"  cycle: {' -> '.join(cycle)} -> {cycle[0]}{tag}")
+        for f in soft:
+            _print_cycle(f, allowed, advisory=True)
+    if package:
+        print(
+            f"import-cycle check: {len(package)} package-level cycle(s) between sibling packages (advisory, not blocking):"
+        )
+        for f in package:
+            _print_cycle(f, allowed, advisory=True)
 
 
 def run(*, as_json: bool, advisory: bool, strict_lazy: bool = False) -> int:
     """Report import cycles among ``src/`` modules.
 
     Advisory mode (``make deadcode-full``) lists EVERY cycle and always exits 0. Blocking mode
-    (pre-commit / CI) fails (exit 1) only on HARD cycles NOT in ``.deadcode.yml``'s ``allowed_cycles`` — so a
-    codebase with a baselined set of accepted cycles still blocks any NEW one (the ratchet pattern). SOFT
-    cycles (broken by a function-local import) are listed but never block unless ``strict_lazy`` is set.
+    (pre-commit / CI) fails (exit 1) only on HARD cycles NOT covered by ``.deadcode.yml``'s ``allowed_cycles``
+    (an entry covers any cycle whose members are a subset of its own) — so a codebase with a baselined set of
+    accepted cycles still blocks any NEW one (the ratchet pattern). SOFT cycles (broken by a function-local
+    import) are listed but never block unless ``strict_lazy`` is set; package-level cycles are advisory only.
     """
-    allowed = set(config.load_deadcode_config(diffscope.REPO_ROOT).allowed_cycles)
-    graph = build_import_graph()
-    top_graph = graph if strict_lazy else build_import_graph(include_lazy=False)
-    all_cycles = classify_cycles(graph, top_graph)
-    reported = all_cycles if advisory else [(c, kind) for c, kind in all_cycles if _cycle_key(c) not in allowed]
+    allowed = [set(entry.split(" <-> ")) for entry in config.load_deadcode_config(diffscope.REPO_ROOT).allowed_cycles]
+    ties = collect_ties()
+    graph = build_import_graph(ties=ties)
+    top_graph = graph if strict_lazy else build_import_graph(ties=ties, include_lazy=False)
+    edges: dict[tuple[str, str], Tie] = {}
+    for tie in ties:
+        edges[tie.src, tie.dst] = _merge(edges.get((tie.src, tie.dst)), tie)
+    file_found = [Found(c, kind, *_circle_report(c, edges)) for c, kind in classify_cycles(graph, top_graph)]
+    all_found = [*file_found, *package_cycles(ties, [f.cycle for f in file_found])]
+    reported = all_found if advisory else [f for f in all_found if not _covered(f.cycle, allowed)]
 
     if as_json:
         _print_json(reported, allowed, advisory=advisory)
     else:
-        _print_text(
-            reported, len(all_cycles), {k for c, _ in all_cycles if (k := _cycle_key(c)) in allowed}, advisory=advisory
-        )
+        n_allowed = sum(_covered(f.cycle, allowed) for f in file_found)
+        _print_text(reported, len(file_found), n_allowed, allowed, advisory=advisory)
 
-    blocking = [c for c, kind in all_cycles if kind == "hard" and _cycle_key(c) not in allowed]
+    blocking = [f for f in file_found if f.kind == "hard" and not _covered(f.cycle, allowed)]
     return 0 if advisory or not blocking else 1

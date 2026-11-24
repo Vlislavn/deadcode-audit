@@ -115,7 +115,11 @@ def test_cli_cycles_advisory_json_exits_zero(tmp_path: Path) -> None:
     (source / "right.py").write_text("from modules import left\n", encoding="utf-8")
     result = run_deadcode_cli(tmp_path, "cycles", "--advisory", "--json")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout) == {
+    payload = json.loads(result.stdout)
+    cycle = payload["cycles"][0]
+    assert len(cycle.pop("ties")) == 2  # ties and circle are additive to the stable keys below
+    assert len(cycle.pop("circle")) == 3  # u -> v -> u
+    assert payload == {
         "advisory": True,
         "count": 1,
         "cycles": [
