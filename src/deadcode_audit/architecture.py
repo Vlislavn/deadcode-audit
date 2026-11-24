@@ -1,4 +1,4 @@
-"""Whole-tree ADVISORY architecture rules (``architecture/shallow-module``).
+"""Whole-tree ADVISORY architecture rules: ``architecture/shallow-module`` and ``architecture/wide-directory``.
 
 A *shallow module* has an interface about as wide as its implementation: most of what it contains is
 reached from outside, so callers must learn nearly everything it does. Logic ported (not code) from
@@ -23,10 +23,11 @@ few short lists, and little is hidden behind it (``hidden <= shown * BREAK_EVEN`
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from deadcode_audit import diffscope
+from deadcode_audit import diffscope, javascript
 from deadcode_audit.detectors import thin_wrapper
 from deadcode_audit.diagnostic import ENGINE_CODE_QUALITY, Diagnostic, RuleSpec, Severity, diagnostic_from_spec
 from deadcode_audit.framework import FileContext, safe_parse
@@ -43,6 +44,7 @@ LISTS_LIMIT = 7  # ... and there are more lists than this ...
 LIST_LENGTH_LIMIT = 7  # ... or some single list is longer than this
 BREAK_EVEN = 1  # ... and hidden <= shown * BREAK_EVEN
 NOTES_LIMIT = 7  # names listed in the finding's detail before "+N more"
+MEMBERS_LIMIT = 15  # a directory with MORE direct members (source files + source-bearing subdirectories) is wide
 
 SHALLOW_MODULE_RULE = RuleSpec(
     rule="architecture/shallow-module",
@@ -52,6 +54,18 @@ SHALLOW_MODULE_RULE = RuleSpec(
     help="Most of this module/package is reached from outside, so its interface is about as wide as its "
     "implementation. Hide helpers behind fewer entry points, or group related functions into a class.",
 )
+
+WIDE_DIRECTORY_RULE = RuleSpec(
+    rule="architecture/wide-directory",
+    engine=ENGINE_CODE_QUALITY,
+    default_severity=Severity.WARNING,
+    category="Architecture",
+    help="This directory has too many direct members to hold in mind at once. Group related files into "
+    "subpackages so each directory shows a handful of concepts.",
+    style=True,
+)
+
+RULES = (SHALLOW_MODULE_RULE, WIDE_DIRECTORY_RULE)
 
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _EXCLUDED_DECORATORS = frozenset({"property", "setter", "getter", "deleter", "overload", "abstractmethod"})
@@ -221,3 +235,46 @@ def shallow_module_diagnostics(files: list[Path]) -> list[Diagnostic]:
             )
         )
     return sorted(diagnostics, key=lambda d: (d.file_path, d.line))
+
+
+def wide_directory_diagnostics(files: list[Path]) -> list[Diagnostic]:
+    """One advisory warning per directory with more than :data:`MEMBERS_LIMIT` direct members.
+
+    Members are source files (not ``__init__.py``) plus subdirectories holding some, counted from disk (the shared
+    runtime walker: source roots, no test/vendored/cache paths), so a
+    ``--changed`` scan sees the whole directory; a directory is reported when a scanned file lies under it, at its
+    ``__init__.py`` if present, else at the directory itself.
+    """
+    roots = set(diffscope.source_roots())
+    file_members: dict[Path, list[str]] = defaultdict(list)
+    dir_members: dict[Path, set[str]] = defaultdict(set)
+    for path in diffscope.runtime_files(suffixes=javascript.SUFFIXES | {".py"}):
+        if path.name == "__init__.py" or path.stem.endswith("_test"):
+            continue  # a package marker is not a member; ``*_test.py`` is a test file
+        file_members[path.parent].append(path.name)
+        child = path.parent
+        while child not in roots and child != Path("."):
+            dir_members[child.parent].add(child.name)
+            child = child.parent
+    diagnostics: list[Diagnostic] = []
+    for directory in sorted(file_members.keys() | dir_members.keys()):
+        names, subdirs = sorted(file_members[directory]), sorted(dir_members[directory])
+        if len(names) + len(subdirs) <= MEMBERS_LIMIT or not any(f.is_relative_to(directory) for f in files):
+            continue
+        init = directory / "__init__.py"
+        diagnostics.append(
+            diagnostic_from_spec(
+                WIDE_DIRECTORY_RULE,
+                file_path=(init if (diffscope.REPO_ROOT / init).is_file() else directory).as_posix(),
+                line=1,
+                message=f"directory '{directory.as_posix()}' has {len(names) + len(subdirs)} direct members "
+                f"({len(names)} files, {len(subdirs)} subdirectories; limit {MEMBERS_LIMIT})",
+                detail=f"files: {_cap(names)}" + (f"; dirs: {_cap(subdirs)}" if subdirs else ""),
+            )
+        )
+    return diagnostics
+
+
+def diagnostics(files: list[Path]) -> list[Diagnostic]:
+    """All whole-tree architecture advisories for the scanned ``files``."""
+    return [*shallow_module_diagnostics(files), *wide_directory_diagnostics(files)]
