@@ -17,6 +17,9 @@
 - Overlaps skip strict same-file JS/TS ancestor/descendant source-span pairs and compare within one language pool; siblings, cross-file pairs and embedding inputs are kept.
 - Optional `javascript/duplicate-code` (warning) in `scan`/`ci`: with a pinned local jscpd 5.4.3 (`DEADCODE_JSCPD`, MIT, invoked not vendored) one finding per cluster of exact JS/JSX token clones (≥50 tokens, ≥5 lines, tests excluded). Skipped with one stderr note when jscpd is absent or another version; Oxlint checks unchanged.
 
+### Changed
+- Internal restructure (no behaviour or CLI change): `deadcode_audit` modules grouped into `structure/`, `overlap/`, `js/` and `gates/` subpackages; `diffscope` split into git primitives (`diffscope`) and repo layout (`layout`); `suppress`/`_mask` folded into `framework`; `reachability` split into `resolver` + gate; the self-scan is now free of architecture and file-too-large findings. Top-level `from deadcode_audit import ...` names are unchanged; deep imports such as `deadcode_audit.cycles` moved (e.g. `deadcode_audit.structure.cycles`).
+
 ### Fixed
 - `ai-slop/redundant-try-catch`: a bare `raise` handler followed by a later handler that could catch the same error (bare/`Exception`/builtin supertype, or unresolvable) shields it and is no longer reported.
 - `reachability-scan`/`scan` honor `project.vulture_whitelist` (names in it are consumed, as for Vulture). Vulture ignores pydantic `model_config`/`model_fields` by default.

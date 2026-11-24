@@ -1,15 +1,14 @@
 """Monorepo dead-code / AI-slop gate, as a cohesive module.
 
-Submodules (one concern each):
+Layout (one concern each):
 
-* :mod:`diffscope`   — shared git / merge-base / changed-line primitives.
-* :mod:`config`      — single source of truth for cross-tier constants.
-* :mod:`vulture_gate`  — Tier 2 diff-scoped Vulture reachability gate.
-* :mod:`reachability`  — Tier 4 runtime-consumer check for changed public symbols.
-* :mod:`mutation`      — Tier 5 coverage + mutation gate (and its target selection).
-* :mod:`redundancy`    — Tier 6a redundant-transform detection + the Tier 6 orchestration.
-* :mod:`clones`        — Tier 6b near-duplicate function detection.
-* :mod:`cli`           — ``python -m deadcode_audit <command>`` dispatch.
+* :mod:`diffscope`, :mod:`layout`, :mod:`config` — git/changed-line primitives, repo layout, cross-tier constants.
+* :mod:`structure`   — ``vulture_gate`` (Tier 2), ``reachability`` + ``resolver`` (Tier 4), ``redundancy`` (Tier 6a),
+  ``cycles``, ``architecture``, ``reachability_scan``.
+* :mod:`overlap`     — ``clones`` (Tier 6b), ``overlaps`` and their embedding/cache/blind-text helpers.
+* :mod:`js`          — Oxlint/jscpd adapter and the Tree-sitter function collector.
+* :mod:`gates`       — ``mutation`` (Tier 5), ``stub_sensitivity``, ``growth``, ``history``.
+* :mod:`cli`         — ``python -m deadcode_audit <command>`` dispatch.
 
 Public symbols are re-exported here for convenience; code that monkeypatches a helper
 should target the submodule where it is *used* (e.g. ``diffscope.added_lines_by_file``).
