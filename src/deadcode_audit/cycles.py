@@ -140,10 +140,14 @@ class Tie(NamedTuple):
     site: tuple[str, int]
 
 
-def collect_ties() -> list[Tie]:
-    """Walk every ``src/`` module's runtime imports ONCE; one :class:`Tie` per ``(src, dst, lazy)`` edge."""
+def collect_ties() -> tuple[list[Tie], int]:
+    """Walk every ``src/`` module's runtime imports ONCE: one :class:`Tie` per ``(src, dst, lazy)`` edge.
+
+    Also returns the number of files that did not parse (they contribute no edges, so the graph is incomplete).
+    """
     nodes = _internal_nodes()
     acc: dict[tuple[str, str, bool], Tie] = {}
+    unparsed = 0
     for dotted, path in nodes.items():
         tree = safe_parse(diffscope.read_text(path))
         if tree is None:
@@ -151,6 +155,7 @@ def collect_ties() -> list[Tie]:
                 f"warning: {path.as_posix()} does not parse; treating as no imports",
                 file=sys.stderr,
             )
+            unparsed += 1
             continue
         uses = _attribute_uses(tree)
         for node, lazy in _runtime_imports(tree):
@@ -164,7 +169,7 @@ def collect_ties() -> list[Tie]:
                         (path.as_posix(), node.lineno),
                     )
                     acc[(dotted, target, lazy)] = _merge(acc.get((dotted, target, lazy)), tie)
-    return list(acc.values())
+    return list(acc.values()), unparsed
 
 
 def _merge(old: Tie | None, new: Tie) -> Tie:
@@ -187,7 +192,7 @@ def build_import_graph(*, include_lazy: bool = True, ties: list[Tie] | None = No
     leaving the ``top`` edges that execute while the module is being imported.
     """
     graph: dict[str, set[str]] = {}
-    for tie in collect_ties() if ties is None else ties:
+    for tie in collect_ties()[0] if ties is None else ties:
         graph.setdefault(tie.dst, set())
         edges = graph.setdefault(tie.src, set())
         if include_lazy or not tie.lazy:
@@ -311,6 +316,28 @@ def _circle_report(cycle: list[str], edges: dict[tuple[str, str], Tie]) -> tuple
     return ties, [first.src, *reversed(path)]
 
 
+def _edge_map(ties: list[Tie]) -> dict[tuple[str, str], Tie]:
+    edges: dict[tuple[str, str], Tie] = {}
+    for tie in ties:
+        edges[tie.src, tie.dst] = _merge(edges.get((tie.src, tie.dst)), tie)
+    return edges
+
+
+def _blocker_edges(
+    cycle: list[str], top_sccs: list[list[str]], top_edges: dict[tuple[str, str], Tie]
+) -> dict[tuple[str, str], Tie]:
+    """The edges that make a HARD cycle hard: top-level edges inside a top-only SCC contained in ``cycle``."""
+    members = set(cycle)
+    return {
+        (u, v): top_edges[u, v]
+        for scc in top_sccs
+        if members.issuperset(scc)
+        for u in scc
+        for v in scc
+        if (u, v) in top_edges
+    }
+
+
 def _lift(tie: Tie) -> Tie | None:
     """Lift a file edge to the children of the lowest common ancestor of its ends (None if one contains the other)."""
     src, dst = tie.src.split("."), tie.dst.split(".")
@@ -347,7 +374,7 @@ def _site(tie: Tie) -> str:
     return f"{tie.site[0]}:{tie.site[1]}"
 
 
-def _print_json(found: list[Found], allowed: list[set[str]], *, advisory: bool) -> None:
+def _print_json(found: list[Found], allowed: list[set[str]], *, advisory: bool, unparsed: int) -> None:
     cycles_json = [
         {
             "key": _cycle_key(f.cycle),
@@ -368,13 +395,20 @@ def _print_json(found: list[Found], allowed: list[set[str]], *, advisory: bool) 
         }
         for f in found
     ]
-    print(json.dumps({"advisory": advisory, "count": len(found), "cycles": cycles_json}, indent=2))
+    report = {
+        "advisory": advisory,
+        "count": len(found),
+        "unparsed": unparsed,
+        "cycles": cycles_json,
+    }
+    print(json.dumps(report, indent=2))
 
 
 def _print_cycle(f: Found, allowed: list[set[str]], *, advisory: bool) -> None:
     tag = "  [allowlisted]" if advisory and _covered(f.cycle, allowed) else ""
     label = "package cycle" if f.kind == "package" else "cycle"
-    print(f"  {label}: {' -> '.join(f.cycle)} -> {f.cycle[0]}{tag}")
+    print(f"  {label}{tag}")
+    print(f"    members: {_capped(f.cycle)}")
     if not f.ties:
         return
     cut = f.ties[0]
@@ -384,6 +418,10 @@ def _print_cycle(f: Found, allowed: list[set[str]], *, advisory: bool) -> None:
     print(f"    ties: {_capped([f'{t.src} -> {t.dst} [{len(t.names)}] {_site(t)}' for t in f.ties])}")
 
 
+def _incomplete(unparsed: int) -> str:
+    return f"{unparsed} file(s) did not parse; result incomplete"
+
+
 def _print_text(
     found: list[Found],
     total: int,
@@ -391,6 +429,7 @@ def _print_text(
     allowed: list[set[str]],
     *,
     advisory: bool,
+    unparsed: int,
 ) -> None:
     hard = [f for f in found if f.kind == "hard"]
     soft = [f for f in found if f.kind == "soft"]
@@ -402,12 +441,16 @@ def _print_text(
             _print_cycle(f, allowed, advisory=advisory)
         print("  -> break the cycle (extract the shared piece, or invert one dependency); allowlist a")
         print("     deliberate cycle in .deadcode.yml under allowed_cycles by its '<a> <-> <b>' key")
+    elif not total and unparsed:
+        print(f"import-cycle check: no circular imports found among the parsed modules; {_incomplete(unparsed)}")
     elif not total:
         print("import-cycle check: no circular imports among src/ modules")
     else:
         # Only allowlisted and/or soft cycles exist: claiming zero circular imports would be false advertising.
         note = f" ({n_allowed} cycle(s) allowlisted in .deadcode.yml)" if n_allowed else ""
         print(f"import-cycle check: no blocking circular imports{note}")
+    if unparsed and total:
+        print(f"import-cycle check: {_incomplete(unparsed)}")
     if soft:
         print(f"import-cycle check: {len(soft)} soft cycle(s), each broken by a function-local import (not blocking):")
         for f in soft:
@@ -430,21 +473,35 @@ def run(*, as_json: bool, advisory: bool, strict_lazy: bool = False) -> int:
     import) are listed but never block unless ``strict_lazy`` is set; package-level cycles are advisory only.
     """
     allowed = [set(entry.split(" <-> ")) for entry in config.load_deadcode_config(diffscope.REPO_ROOT).allowed_cycles]
-    ties = collect_ties()
+    ties, unparsed = collect_ties()
     graph = build_import_graph(ties=ties)
     top_graph = graph if strict_lazy else build_import_graph(ties=ties, include_lazy=False)
-    edges: dict[tuple[str, str], Tie] = {}
-    for tie in ties:
-        edges[tie.src, tie.dst] = _merge(edges.get((tie.src, tie.dst)), tie)
-    file_found = [Found(c, kind, *_circle_report(c, edges)) for c, kind in classify_cycles(graph, top_graph)]
+    edges = _edge_map(ties)
+    top_edges = edges if strict_lazy else _edge_map([t for t in ties if not t.lazy])
+    top_sccs = find_cycles(top_graph)
+    file_found = [
+        Found(
+            c,
+            kind,
+            *_circle_report(c, _blocker_edges(c, top_sccs, top_edges) if kind == "hard" else edges),
+        )
+        for c, kind in classify_cycles(graph, top_graph)
+    ]
     all_found = [*file_found, *package_cycles(ties, [f.cycle for f in file_found])]
     reported = all_found if advisory else [f for f in all_found if not _covered(f.cycle, allowed)]
 
     if as_json:
-        _print_json(reported, allowed, advisory=advisory)
+        _print_json(reported, allowed, advisory=advisory, unparsed=unparsed)
     else:
         n_allowed = sum(_covered(f.cycle, allowed) for f in file_found)
-        _print_text(reported, len(file_found), n_allowed, allowed, advisory=advisory)
+        _print_text(
+            reported,
+            len(file_found),
+            n_allowed,
+            allowed,
+            advisory=advisory,
+            unparsed=unparsed,
+        )
 
     blocking = [f for f in file_found if f.kind == "hard" and not _covered(f.cycle, allowed)]
     return 0 if advisory or not blocking else 1

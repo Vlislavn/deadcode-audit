@@ -122,6 +122,7 @@ def test_cli_cycles_advisory_json_exits_zero(tmp_path: Path) -> None:
     assert payload == {
         "advisory": True,
         "count": 1,
+        "unparsed": 0,
         "cycles": [
             {
                 "key": "modules.left <-> modules.right",
