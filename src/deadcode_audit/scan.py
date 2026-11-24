@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from deadcode_audit import config, diffscope, javascript, reachability_scan
+from deadcode_audit import architecture, config, diffscope, javascript, reachability_scan
 from deadcode_audit.framework import Detector, run_detectors
 from deadcode_audit.scoring import (
     DEFAULT_SMOOTHING,
@@ -97,6 +97,7 @@ def _python_diagnostics(files: list[Path], detectors: Sequence[Detector], dead_s
     if dead_symbols:
         diagnostics += reachability_scan.dead_symbol_diagnostics(files)
         diagnostics += reachability_scan.duplicate_constant_diagnostics(files)
+        diagnostics += architecture.shallow_module_diagnostics(files)
     return diagnostics
 
 

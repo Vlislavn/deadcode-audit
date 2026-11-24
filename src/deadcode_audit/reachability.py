@@ -329,36 +329,46 @@ def _aliases_for_module(fact: ModuleFacts, def_dotted: str) -> set[str]:
     return aliases
 
 
+def referencing_modules(
+    symbol: str,
+    def_dotted: str,
+    facts: list[ModuleFacts],
+    reexport_map: dict[str, set[str]],
+) -> set[str]:
+    """Dotted names of the runtime modules that hold a RESOLVED reference to ``symbol`` defined in ``def_dotted``.
+
+    Covers: intra-module use (the defining module itself), direct/aliased ``from <def_module> import symbol``
+    (and re-export packages), qualified ``module.symbol`` attribute access, and ``from <def_module> import *``.
+    Best-effort and biased toward "resolved" (a miss only yields an advisory, never a block).
+    """
+    exposing = {def_dotted} | reexport_map.get(symbol, set())
+    referencing: set[str] = set()
+    for fact in facts:
+        if fact.dotted == def_dotted:
+            # Intra-module reference (use of the name somewhere other than the definition itself).
+            if symbol in fact.used_names or any(attr == symbol for _base, attr in fact.used_attrs):
+                referencing.add(fact.dotted)
+            continue
+        if (
+            # Direct / re-exported from-import of the symbol.
+            any(name == symbol and module in exposing for module, name, _asname in fact.from_imports)
+            # Qualified ``module.symbol`` attribute access.
+            or any((alias, symbol) in fact.used_attrs for alias in _aliases_for_module(fact, def_dotted))
+            # Star import from the defining module that then uses the bare name.
+            or (def_dotted in fact.star_from and symbol in fact.used_names)
+        ):
+            referencing.add(fact.dotted)
+    return referencing
+
+
 def resolved_reference_exists(
     symbol: str,
     def_dotted: str,
     facts: list[ModuleFacts],
     reexport_map: dict[str, set[str]],
 ) -> bool:
-    """True when some runtime module holds a RESOLVED reference to ``symbol`` defined in ``def_dotted``.
-
-    Covers: intra-module use, direct/aliased ``from <def_module> import symbol`` (and re-export
-    packages), qualified ``module.symbol`` attribute access, and ``from <def_module> import *``.
-    Best-effort and biased toward "resolved" (a miss only yields an advisory, never a block).
-    """
-    exposing = {def_dotted} | reexport_map.get(symbol, set())
-    for fact in facts:
-        if fact.dotted == def_dotted:
-            # Intra-module reference (use of the name somewhere other than the definition itself).
-            if symbol in fact.used_names or any(attr == symbol for _base, attr in fact.used_attrs):
-                return True
-            continue
-        # Direct / re-exported from-import of the symbol.
-        for module, name, _asname in fact.from_imports:
-            if name == symbol and module in exposing:
-                return True
-        # Qualified ``module.symbol`` attribute access.
-        if any((alias, symbol) in fact.used_attrs for alias in _aliases_for_module(fact, def_dotted)):
-            return True
-        # Star import from the defining module that then uses the bare name.
-        if def_dotted in fact.star_from and symbol in fact.used_names:
-            return True
-    return False
+    """True when some runtime module holds a RESOLVED reference to ``symbol`` defined in ``def_dotted``."""
+    return bool(referencing_modules(symbol, def_dotted, facts, reexport_map))
 
 
 def entry_point_targets() -> set[tuple[str, str]]:
