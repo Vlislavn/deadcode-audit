@@ -151,11 +151,6 @@ def added_lines_by_file(compare_branch: str, paths: list[Path]) -> dict[str, set
     return changed_lines_by_file
 
 
-def all_src_files() -> list[Path]:
-    """Return every ``src`` Python file relative to the repo root (whole-corpus scans)."""
-    return runtime_files()
-
-
 def read_text(path: Path) -> str:
     """Read a repo-relative file as UTF-8."""
     return (REPO_ROOT / path).read_text(encoding="utf-8-sig")

@@ -79,7 +79,7 @@ _DOTTED_PATH = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)+")  # "pkg.module.Name"
 def build_candidates() -> list[PublicSymbolDefinition]:
     """Every public top-level symbol in ``src/`` — the whole-tree corpus (NOT diff-scoped)."""
     candidates: list[PublicSymbolDefinition] = []
-    for path in diffscope.all_src_files():
+    for path in diffscope.runtime_files():
         candidates.extend(public_symbol_definitions(path))
     return candidates
 
@@ -143,7 +143,8 @@ def scan() -> list[tuple[PublicSymbolDefinition, str]]:
             has_test_ref=definition.symbol in test_reference_names,
             orphaned_blocks=False,  # whole-tree scan never blocks; orphaned -> top advisory instead
         )
-        assert reason is not None  # orphaned_blocks=False => every verdict is advisory
+        if reason is None:  # orphaned_blocks=False => every verdict is advisory
+            raise RuntimeError("advisory verdict without a reason")
         rows.append((definition, reason))
 
     rows.sort(

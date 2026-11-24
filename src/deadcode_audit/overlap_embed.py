@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 # trust_remote_code runs repository code: allowed ONLY for these ids, always at the pinned commit (q162).
 _PINNED_REMOTE = {
-    "codesage/codesage-small-v2": "4844c2f24b25e181aa43ca058cc73dd2622565c1",
-    "jinaai/jina-embeddings-v2-base-code": "516f4baf13dec4ddddda8631e019b5737c8bc250",
+    "codesage/codesage-small-v2": "4844c2f24b25e181aa43ca058cc73dd2622565c1",  # ai-slop: ignore[hardcoded-id] pin IS the point (q162)
+    "jinaai/jina-embeddings-v2-base-code": "516f4baf13dec4ddddda8631e019b5737c8bc250",  # ai-slop: ignore[hardcoded-id] pin IS the point (q162)
 }
 _MODEL: tuple[str, Any, Any] | None = None
 _BATCH = 4

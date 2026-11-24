@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 
@@ -71,18 +72,8 @@ def vulture_ignore_decorators_arg() -> str:
 
 # --- Mutation gate (Tier 5) self-targets ---
 
-# The dead-code module mutation-tests ITSELF when its source changes; any file under this
-# directory is a valid mutation target (generalised from the former single-file hardcode so
-# the whole package is self-protected, not just one module).
-SELF_TARGET_DIR = Path("scripts/deadcode")
-
 # Non-``src`` runtime scripts that are mutation targets in addition to the package itself.
 EXTRA_MUTATION_TARGETS: frozenset[Path] = frozenset({Path("scripts/evals/monorepo_eval.py")})
-
-
-def is_self_target(path: Path) -> bool:
-    """True for a file inside the dead-code module (mutation self-target)."""
-    return path.as_posix().startswith(f"{SELF_TARGET_DIR.as_posix()}/")
 
 
 def is_mutation_target(path: Path) -> bool:
@@ -122,12 +113,8 @@ def _require(condition: bool, message: str) -> None:
         raise ValueError(f"invalid .deadcode.yml: {message}")
 
 
-def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
-    _require(isinstance(raw, dict), "top level must be a mapping")
-    assert isinstance(raw, dict)
-    unknown = set(raw) - _VALID_TOP_KEYS
-    _require(not unknown, f"unknown top-level keys {sorted(unknown)}")
-
+def _load_parent(raw: dict[str, Any], base_dir: Path, depth: int) -> DeadcodeConfig:
+    """Resolve ``extends`` (str or list[str]) to the merged parent config (defaults when absent)."""
     parent = DeadcodeConfig()
     extends = raw.get("extends")
     if extends is not None:
@@ -148,7 +135,10 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
                     depth + 1,
                 ),
             )
+    return parent
 
+
+def _parse_rules(raw: dict[str, Any]) -> dict[Any, Any]:
     rules = raw.get("rules", {})
     _require(isinstance(rules, dict), "rules must be a mapping of rule-id -> severity")
     # YAML 1.1 parses unquoted ``off`` as boolean False; accept that as the "off" severity so
@@ -159,7 +149,11 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
             isinstance(sev, str) and sev in _VALID_SEVERITIES,
             f"rule '{rule_id}' severity must be one of {sorted(_VALID_SEVERITIES)} (quote it if it is 'off'/'on')",
         )
+    return rules
 
+
+def _parse_scoring(raw: dict[str, Any]) -> tuple[dict[Any, Any], Any, dict[Any, Any]]:
+    """Validate ``scoring`` and return ``(weights, smoothing, thresholds)``."""
     scoring = raw.get("scoring", {})
     _require(isinstance(scoring, dict), "scoring must be a mapping")
     unknown_scoring = set(scoring) - {"weights", "smoothing", "thresholds"}
@@ -190,7 +184,10 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
         "scoring.thresholds.ok must be an int",
     )
     _require(good is None or ok is None or good >= ok, "scoring.thresholds.good must be >= scoring.thresholds.ok")
+    return weights, smoothing, thresholds
 
+
+def _parse_fail_below(raw: dict[str, Any]) -> Any:
     ci = raw.get("ci", {})
     _require(isinstance(ci, dict), "ci must be a mapping")
     unknown_ci = set(ci) - {"failBelow"}
@@ -200,19 +197,10 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
         fail_below is None or (isinstance(fail_below, int) and not isinstance(fail_below, bool)),
         "ci.failBelow must be an int",
     )
+    return fail_below
 
-    exclude = raw.get("exclude", [])
-    _require(
-        isinstance(exclude, list) and all(isinstance(e, str) for e in exclude),
-        "exclude must be a list of glob strings",
-    )
 
-    allowed_cycles = raw.get("allowed_cycles", [])
-    _require(
-        isinstance(allowed_cycles, list) and all(isinstance(c, str) for c in allowed_cycles),
-        "allowed_cycles must be a list of '<a> <-> <b>' cycle-key strings",
-    )
-
+def _parse_project(raw: dict[str, Any]) -> dict[Any, Any]:
     project = raw.get("project", {})
     _require(isinstance(project, dict), "project must be a mapping")
     supported = {"source_roots", "import_roots", "test_roots", "mutation_roots", "mutation_also_copy", "mutation_test_map", "vulture_whitelist"}
@@ -227,6 +215,31 @@ def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
             _require(all(not Path(x).is_absolute() and ".." not in Path(x).parts for x in value), f"project.{key} must stay inside target checkout")
             if key in {"source_roots", "import_roots", "test_roots", "mutation_roots"}:
                 _require(value, f"project.{key} must not be empty — omit the key to use the built-in defaults")
+    return project
+
+
+def _parse_config(raw: object, base_dir: Path, depth: int) -> DeadcodeConfig:
+    _require(isinstance(raw, dict), "top level must be a mapping")
+    raw = cast("dict[str, Any]", raw)  # _require above guarantees the mapping
+    unknown = set(raw) - _VALID_TOP_KEYS
+    _require(not unknown, f"unknown top-level keys {sorted(unknown)}")
+
+    parent = _load_parent(raw, base_dir, depth)
+    rules = _parse_rules(raw)
+    weights, smoothing, thresholds = _parse_scoring(raw)
+    fail_below = _parse_fail_below(raw)
+    exclude = raw.get("exclude", [])
+    _require(
+        isinstance(exclude, list) and all(isinstance(e, str) for e in exclude),
+        "exclude must be a list of glob strings",
+    )
+
+    allowed_cycles = raw.get("allowed_cycles", [])
+    _require(
+        isinstance(allowed_cycles, list) and all(isinstance(c, str) for c in allowed_cycles),
+        "allowed_cycles must be a list of '<a> <-> <b>' cycle-key strings",
+    )
+    project = _parse_project(raw)
     own = DeadcodeConfig(
         project=project,
         rule_severity={str(k): v for k, v in rules.items()},

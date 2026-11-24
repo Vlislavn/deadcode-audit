@@ -85,7 +85,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
         selected = scan.resolve_target_files(paths, changed=False, compare_branch="main",
                                              exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
     else:
-        python = diffscope.all_src_files()
+        python = diffscope.runtime_files()
         candidates = scan.resolve_target_files([], changed=False, compare_branch="main",
                                                exclude=config.load_deadcode_config(diffscope.REPO_ROOT).exclude)
         selected = [*python, *(path for path in candidates if path.suffix in javascript.SUFFIXES)]
@@ -98,7 +98,7 @@ def build_corpus(paths: list[str] | None = None) -> list[_SourcedFunc]:
             try:
                 funcs.extend(_SourcedFunc(record, text, blind_text)
                              for record, text, blind_text in collect_functions_with_blind(source, path))
-            except SyntaxError:  # same policy as Python: one malformed file never aborts the audit
+            except SyntaxError:  # ai-slop: ignore[swallowed-exception] stderr warning + skip: one malformed file never aborts the audit
                 print(f"warning: {path.as_posix()} does not parse; skipping overlap analysis", file=sys.stderr)
             continue
         source = diffscope.read_text(path)

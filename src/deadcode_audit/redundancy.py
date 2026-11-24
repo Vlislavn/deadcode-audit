@@ -293,7 +293,7 @@ def run_check(compare_branch: str, *, threshold: float, min_tokens: int) -> int:
 
     # Clone detection: changed functions (touching a changed line) vs the whole src corpus.
     corpus: list[clones.FuncRecord] = []
-    for path in diffscope.all_src_files():
+    for path in diffscope.runtime_files():
         corpus.extend(clones.collect_functions(diffscope.read_text(path), path))
     changed_set = {p.as_posix() for p in changed_files}
     targets = [

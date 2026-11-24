@@ -93,7 +93,7 @@ def normalize_function(node: _FuncDef) -> list[str]:
     for child in body:
         for sub in ast.walk(child):
             tokens.append(type(sub).__name__)
-            if isinstance(sub, ast.Name):
+            if isinstance(sub, ast.Name):  # ai-slop: ignore[python-isinstance-ladder] token normaliser dispatches on node type by design
                 tokens.append(placeholder(sub.id) if sub.id in locals_ else f"#{sub.id}")
             elif isinstance(sub, ast.arg):
                 tokens.append(placeholder(sub.arg))

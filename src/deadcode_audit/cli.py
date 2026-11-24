@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from deadcode_audit import (
     config,
@@ -265,41 +265,20 @@ COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
 }
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Python dead-code and Python/JavaScript/TypeScript quality audit")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    def _with_compare(name: str, help_text: str, *, null: bool = False) -> argparse.ArgumentParser:
-        sub = subparsers.add_parser(name, help=help_text)
-        sub.add_argument("--compare-branch", default="main")
-        if null:
-            sub.add_argument("--null", action="store_true", help="Print NUL-delimited paths")
-        return sub
-
-    _with_compare("changed-python-files", "Print changed tracked Python files", null=True)
-    _with_compare("mypy-targets", "Print changed files for the mypy dead-branch gate", null=True)
-    _with_compare(
-        "mutation-targets",
-        "Print changed files for the mutation dead-code gate",
-        null=True,
-    )
-    _with_compare("run-mutmut-changed", "Run mutmut against changed dead-code targets").add_argument(
+def _add_gate_commands(subparsers: Any) -> None:
+    _with_compare(subparsers, "changed-python-files", "Print changed tracked Python files", null=True)
+    _with_compare(subparsers, "mypy-targets", "Print changed files for the mypy dead-branch gate", null=True)
+    _with_compare(subparsers, "mutation-targets", "Print changed files for the mutation dead-code gate", null=True)
+    _with_compare(subparsers, "run-mutmut-changed", "Run mutmut against changed dead-code targets").add_argument(
         "--only-touched-functions",
         action="store_true",
         help="Mutate only functions whose lines the diff touched (kill rate over those mutants)",
     )
-    _with_compare(
-        "runtime-consumer-check",
-        "Fail when changed public symbols have no runtime consumer",
-    )
-    _with_compare(
-        "vulture-changed",
-        "Vulture gate on changed lines (blocks; advises candidates)",
-    )
+    _with_compare(subparsers, "runtime-consumer-check", "Fail when changed public symbols have no runtime consumer")
+    _with_compare(subparsers, "vulture-changed", "Vulture gate on changed lines (blocks; advises candidates)")
 
     redundancy_parser = _with_compare(
-        "redundancy",
-        "Block redundant transforms; advise near-duplicate functions",
+        subparsers, "redundancy", "Block redundant transforms; advise near-duplicate functions"
     )
     redundancy_parser.add_argument("--clone-threshold", type=float, default=0.95)
     redundancy_parser.add_argument("--min-tokens", type=int, default=40)
@@ -310,15 +289,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "When omitted, runs the full diff-scoped scan against --compare-branch.",
     )
 
-    def _add_scan_args(parser_obj: argparse.ArgumentParser) -> None:
-        parser_obj.add_argument("paths", nargs="*", help="Files/dirs to scan (default: configured roots)")
-        parser_obj.add_argument("--compare-branch", default="main")
-        parser_obj.add_argument(
-            "--changed",
-            action="store_true",
-            help="Scan only changed src files vs --compare-branch",
-        )
 
+def _with_compare(subparsers: Any, name: str, help_text: str, *, null: bool = False) -> argparse.ArgumentParser:
+    sub = subparsers.add_parser(name, help=help_text)
+    sub.add_argument("--compare-branch", default="main")
+    if null:
+        sub.add_argument("--null", action="store_true", help="Print NUL-delimited paths")
+    return sub
+
+
+def _add_scan_args(parser_obj: argparse.ArgumentParser) -> None:
+    parser_obj.add_argument("paths", nargs="*", help="Files/dirs to scan (default: configured roots)")
+    parser_obj.add_argument("--compare-branch", default="main")
+    parser_obj.add_argument(
+        "--changed",
+        action="store_true",
+        help="Scan only changed src files vs --compare-branch",
+    )
+
+
+def _add_scan_commands(subparsers: Any) -> None:
     scan_parser = subparsers.add_parser("scan", help="Scan Python (and JS/TS) files and score 0–100")
     _add_scan_args(scan_parser)
     scan_parser.add_argument("--json", action="store_true", help="JSON output")
@@ -347,6 +337,8 @@ def _build_parser() -> argparse.ArgumentParser:
     trend_parser = subparsers.add_parser("trend", help="Show score history")
     trend_parser.add_argument("--limit", type=int, default=20, help="Max records to show (0 = all)")
 
+
+def _add_audit_commands(subparsers: Any) -> None:
     growth_parser = subparsers.add_parser("growth", help="Size/churn facts between commits, without a bloat threshold")
     growth_parser.add_argument("--base", help="Exact base commit (not the merge base); with --hotspots, omit for the whole history of --head")
     growth_parser.add_argument("--head", default="HEAD", help="Exact head commit (default: HEAD)")
@@ -407,12 +399,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     stub_parser = _with_compare(
-        "stub-sensitivity",
-        "Stub each function body; report functions no test notices (advisory)",
+        subparsers, "stub-sensitivity", "Stub each function body; report functions no test notices (advisory)"
     )
     stub_parser.add_argument("paths", nargs="*", help="Files to audit (default: changed runtime files vs --compare-branch)")
     stub_parser.add_argument("--json", action="store_true", help="JSON output")
 
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Python dead-code and Python/JavaScript/TypeScript quality audit")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_gate_commands(subparsers)
+    _add_scan_commands(subparsers)
+    _add_audit_commands(subparsers)
     return parser
 
 

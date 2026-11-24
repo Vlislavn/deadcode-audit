@@ -113,9 +113,8 @@ def _detect_constant_conditions(ctx: FileContext) -> list[Diagnostic]:
     for node in ast.walk(ctx.tree):
         if not isinstance(node, ast.If):
             continue
-        if not _is_constant_branch_test(node.test):
+        if not (isinstance(node.test, ast.Constant) and _is_constant_branch_test(node.test)):
             continue
-        assert isinstance(node.test, ast.Constant)  # narrowed by _is_constant_branch_test
         label = _describe_constant(node.test)
         findings.append(
             diagnostic_from_spec(

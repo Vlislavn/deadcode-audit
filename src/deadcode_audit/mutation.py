@@ -1,8 +1,7 @@
 """Tier 5: coverage + mutation dead-code gate.
 
 Selects the changed runtime files to mutate, drives mutmut against the narrowest test slice
-that exercises them, and maps the mutmut summary to a pass/fail gate. The dead-code module
-mutation-tests itself: any changed file under ``scripts/deadcode/`` is a self-target.
+that exercises them, and maps the mutmut summary to a pass/fail gate.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,9 +70,7 @@ def min_kill_rate() -> float:
 def kill_rate(stat: MutationGateStat) -> float:
     """Killed fraction of checked mutants (killed+survived); 1.0 when none were checked."""
     checked = stat.killed + stat.survived
-    if checked == 0:
-        return 1.0
-    return stat.killed / checked
+    return stat.killed / checked if checked else 1.0
 
 
 def mutation_gate_failures(stat: MutationGateStat) -> list[str]:
@@ -106,8 +103,6 @@ def mutation_gate_failures(stat: MutationGateStat) -> list[str]:
     if total > 0 and checked == 0 and not failures:
         # Degenerate measurement (e.g. every mutant skipped): kill_rate() reports 1.0 and no
         # per-category counter tripped, so the gate must fail rather than pass unmeasured.
-        # When another zero-tolerance category already fired, the run is blocked anyway and
-        # the list stays minimal.
         failures.append(f"no_mutants_checked total={total} (skipped={stat.skipped})")
     rate = kill_rate(stat)
     floor = min_kill_rate()
@@ -118,9 +113,7 @@ def mutation_gate_failures(stat: MutationGateStat) -> list[str]:
 
 def mutation_gate_exit_code(stat: MutationGateStat) -> int:
     """Return the shell exit code for a mutation summary."""
-    if mutation_gate_failures(stat):
-        return 1
-    return 0
+    return 1 if mutation_gate_failures(stat) else 0
 
 
 def _load_mutation_gate_stat() -> MutationGateStat:
@@ -129,25 +122,13 @@ def _load_mutation_gate_stat() -> MutationGateStat:
 
     _, source_file_mutation_data_by_path = mutmut_main.collect_source_file_mutation_data(mutant_names=[])
     summary = mutmut_main.calculate_summary_stats(source_file_mutation_data_by_path)
-    return MutationGateStat(
-        killed=summary.killed,
-        survived=summary.survived,
-        no_tests=summary.no_tests,
-        timeout=summary.timeout,
-        suspicious=summary.suspicious,
-        skipped=summary.skipped,
-        not_checked=summary.not_checked,
-        check_was_interrupted_by_user=summary.check_was_interrupted_by_user,
-        segfault=summary.segfault,
-    )
+    return MutationGateStat(**{f.name: getattr(summary, f.name) for f in fields(MutationGateStat)})
 
 
-def _print_mutation_gate_failure(stat: MutationGateStat) -> None:
-    """Print a concise mutation gate failure summary."""
-    failures = mutation_gate_failures(stat)
-    if not failures:
-        return
-    print(f"Mutation gate failed: {', '.join(failures)}")
+def _merge_base_files(compare_branch: str) -> tuple[str, set[str]]:
+    """Return the merge base with ``compare_branch`` and the files tracked there."""
+    merge_base = diffscope._git_output("merge-base", "HEAD", diffscope._resolve_compare_ref(compare_branch))
+    return merge_base, set(diffscope.git_lines("ls-tree", "-r", "--name-only", merge_base))
 
 
 def build_mutation_targets(paths: list[Path], *, compare_branch: str | None = None) -> list[Path]:
@@ -161,18 +142,14 @@ def build_mutation_targets(paths: list[Path], *, compare_branch: str | None = No
     targets = sorted(dict.fromkeys(targets))
     if compare_branch is None:
         return targets
-    compare_ref = diffscope._resolve_compare_ref(compare_branch)
-    merge_base = diffscope._git_output("merge-base", "HEAD", compare_ref)
-    originals = set(diffscope.git_lines("ls-tree", "-r", "--name-only", merge_base))
+    merge_base, originals = _merge_base_files(compare_branch)
     selected = []
     for path in targets:
         current = ast.dump(ast.parse((diffscope.REPO_ROOT / path).read_bytes()), include_attributes=False)
         if path.as_posix() not in originals:
             selected.append(path)
             continue
-        original = subprocess.check_output(
-            ["git", "show", f"{merge_base}:{path.as_posix()}"], cwd=diffscope.REPO_ROOT
-        )
+        original = subprocess.check_output(["git", "show", f"{merge_base}:{path.as_posix()}"], cwd=diffscope.REPO_ROOT)
         if ast.dump(ast.parse(original), include_attributes=False) != current:
             selected.append(path)
     return selected
@@ -207,9 +184,7 @@ def build_touched_lines(targets: list[Path], compare_branch: str) -> dict[str, f
     means "mutate everything". A file whose changed lines fall in no function (module- or
     class-level only) maps to an empty set, so nothing in it is mutated.
     """
-    compare_ref = diffscope._resolve_compare_ref(compare_branch)
-    merge_base = diffscope._git_output("merge-base", "HEAD", compare_ref)
-    originals = set(diffscope.git_lines("ls-tree", "-r", "--name-only", merge_base))
+    merge_base, originals = _merge_base_files(compare_branch)
     touched: dict[str, frozenset[int]] = {}
     for path in targets:
         name = path.as_posix()
@@ -269,18 +244,6 @@ def reap_next_mutant_child(real_wait: Callable[[], tuple[int, int]], mutant_chil
             return pid, wait_status
 
 
-def build_do_not_mutate_patterns(copy_roots: list[Path], targets: list[Path]) -> list[str]:
-    """Return file globs that keep mutation focused on the changed files only."""
-    target_paths = {path.as_posix() for path in targets}
-    ignored: list[str] = []
-    for root in copy_roots:
-        for candidate in sorted((diffscope.REPO_ROOT / root).rglob("*.py")):
-            rel_path = candidate.relative_to(diffscope.REPO_ROOT).as_posix()
-            if rel_path not in target_paths:
-                ignored.append(rel_path)
-    return ignored
-
-
 def build_mutation_test_roots(paths: list[Path]) -> list[str]:
     """Return the narrowest test roots that exercise the changed mutation targets.
 
@@ -295,13 +258,14 @@ def build_mutation_test_roots(paths: list[Path]) -> list[str]:
     full unit+scripts suite (which is a superset of the narrow roots).
     """
     mapping = config.load_deadcode_config(diffscope.REPO_ROOT).project.get("mutation_test_map", {})
+    default_roots = [p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")])]
     matched = []
     for path in paths:
         choices = [(prefix, tests) for prefix, tests in mapping.items() if path.is_relative_to(Path(prefix))]
         if not choices:
-            return [p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")])]
+            return default_roots
         matched.extend(max(choices, key=lambda pair: len(pair[0]))[1])
-    return sorted(set(matched)) or [p.as_posix() for p in diffscope.project_paths("test_roots", [Path("tests")])]
+    return sorted(set(matched)) or default_roots
 
 
 def _configure_mutation_for_paths(paths: list[Path]) -> Config:
@@ -319,9 +283,7 @@ def _configure_mutation_for_paths(paths: list[Path]) -> Config:
     config_obj.mutate_only_covered_lines = True
     config_obj.use_setproctitle = False
     budget = mutation_test_timeout_seconds()
-    explicit_budget = any(
-        arg == "--timeout" or arg.startswith("--timeout=") for arg in config_obj.pytest_add_cli_args
-    )
+    explicit_budget = any(arg == "--timeout" or arg.startswith("--timeout=") for arg in config_obj.pytest_add_cli_args)
     if TEST_TIMEOUT_ENV in os.environ or not explicit_budget:
         config_obj.pytest_add_cli_args = [*config_obj.pytest_add_cli_args, f"--timeout={budget}"]
     config_obj.pytest_add_cli_args = [*config_obj.pytest_add_cli_args, "--timeout-method=signal"]
@@ -435,11 +397,7 @@ def _purge_original_source_modules() -> None:
     """Make test imports use copied sources, including the gate's own targets."""
     roots = [
         *(diffscope.REPO_ROOT / root for root in diffscope.source_roots()),
-        *(
-            diffscope.REPO_ROOT / root
-            for root in diffscope.project_paths("import_roots", [])
-            if root != Path(".")
-        ),
+        *(diffscope.REPO_ROOT / root for root in diffscope.project_paths("import_roots", []) if root != Path(".")),
         Path(__file__).resolve().parent,
     ]
     for name, module in list(sys.modules.items()):
@@ -448,9 +406,7 @@ def _purge_original_source_modules() -> None:
         if name in {"__main__", "__mp_main__"}:
             continue
         source = getattr(module, "__file__", None)
-        if source and any(
-            Path(source).resolve().is_relative_to(root.resolve()) for root in roots
-        ):
+        if source and any(Path(source).resolve().is_relative_to(root.resolve()) for root in roots):
             del sys.modules[name]
 
 
@@ -491,9 +447,7 @@ def _run_mutmut_for_paths(paths: list[Path], touched: dict[str, frozenset[int]] 
 
     os.chdir(diffscope.REPO_ROOT)
     _reset_mutants_dir()
-
     _preimport_native_libs()
-
     _configure_mutation_for_paths(paths)
     import mutmut.__main__ as mutmut_main
 
@@ -529,7 +483,7 @@ def _run_mutmut_for_paths(paths: list[Path], touched: dict[str, frozenset[int]] 
     )
     exit_code = mutation_gate_exit_code(stat)
     if exit_code != 0:
-        _print_mutation_gate_failure(stat)
+        print(f"Mutation gate failed: {', '.join(mutation_gate_failures(stat))}")
     return exit_code
 
 
