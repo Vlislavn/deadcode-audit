@@ -27,7 +27,6 @@ not of the surrounding code, so there is no per-condition doubt to resolve:
   not ERROR: the idiom is common (including static type-narrowing asserts) and the inline
   ignore directive with a reason is the escape hatch for authorized uses. Test files are exempt
   (the one legitimate assert habitat).
-
 * ``security/dynamic-import`` — dynamic module loading requires a reviewed call-site
   annotation describing the trusted module-selection boundary.
 
@@ -203,18 +202,18 @@ def _is_placeholder(value: str) -> bool:
     ``your-...-here`` / ``...-here`` / ``...-goes-here`` style stub.
     """
     normalised = value.strip().lower()
-    if not normalised:
-        return True
-    if normalised in _PLACEHOLDER_EXACT:
-        return True
-    # Single repeated character, e.g. ``xxxxxxxx`` / ``********`` / ``00000000``.
-    if len(set(normalised)) == 1:
-        return True
-    # Bracketed template marker ``<...>`` / ``{{ ... }}`` / ``${...}``.
-    if (normalised.startswith("<") and normalised.endswith(">")) or "{{" in normalised or "${" in normalised:
-        return True
-    # ``your-secret-here`` / ``api-key-goes-here`` style stubs.
-    return normalised.endswith("-here") or normalised.endswith("_here") or normalised.startswith("your-")
+    return (
+        not normalised
+        or normalised in _PLACEHOLDER_EXACT
+        or len(set(normalised)) == 1  # single repeated character: ``xxxxxxxx`` / ``********`` / ``00000000``
+        # bracketed template marker ``<...>`` / ``{{ ... }}`` / ``${...}``
+        or (normalised.startswith("<") and normalised.endswith(">"))
+        or "{{" in normalised
+        or "${" in normalised
+        # ``your-secret-here`` / ``api-key-goes-here`` style stubs
+        or normalised.endswith(("-here", "_here"))
+        or normalised.startswith("your-")
+    )
 
 
 def _string_constant(node: ast.expr | None) -> str | None:
@@ -340,14 +339,10 @@ def _is_dynamic_command(node: ast.expr) -> bool:
     ``+`` chain whose every component is a literal or a ``shlex.quote(...)`` call — the safe
     pattern, not an injection surface.
     """
-    if isinstance(node, ast.Name):
-        return True
-    if isinstance(node, ast.JoinedStr):  # f-string
+    if isinstance(node, (ast.Name, ast.JoinedStr)):  # variable or f-string
         return True
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
-        if isinstance(node.op, ast.Add) and _is_fully_quoted_concat(node):
-            return False
-        return True
+        return not (isinstance(node.op, ast.Add) and _is_fully_quoted_concat(node))
     return _is_format_call(node)
 
 
